@@ -141,39 +141,29 @@ def _process_base_image_for_thumbnail(
 
 def _extract_text_from_metadata(metadata: dict) -> tuple[str, str]:
     """
-    Extract a short headline and subtitle from the video title.
+    Extract headline and subtitle for the thumbnail text overlay.
 
-    Title pattern: "Fairway Frequencies — [Scene] | [Mood] ⛳"
+    Headline: Claude-chosen keyword phrase from metadata["thumbnail_text"]
+              (e.g. "STUDY MUSIC", "DEEP FOCUS") — optimized for click-through.
+    Subtitle: mood/genre extracted from the title.
 
     Returns:
-        (headline, subtitle) — e.g. ("GOLDEN HOUR", "Nostalgic LoFi Golf")
+        (headline, subtitle)
     """
     if not metadata:
         return "LOFI GOLF", "Fairway Frequencies"
 
+    # Use Claude's chosen thumbnail keyword phrase as the headline
+    headline = metadata.get("thumbnail_text", "").strip().upper()
+    if not headline:
+        headline = "STUDY MUSIC"  # fallback
+
+    # Subtitle: extract mood/genre from title (part after "|")
     title = metadata.get("title", "")
-
-    # Extract scene part: between "— " and " |"
-    scene = ""
-    mood  = ""
-    match = re.search(r"—\s*(.+?)\s*\|", title)
+    subtitle = "Fairway Frequencies"
+    match = re.search(r"\|\s*(.+?)(?:\s*⛳.*)?$", title)
     if match:
-        scene = match.group(1).strip()
-
-    # Extract mood/genre part: after "| " and before " ⛳"
-    match2 = re.search(r"\|\s*(.+?)(?:\s*⛳.*)?$", title)
-    if match2:
-        mood = match2.group(1).strip().rstrip("⛳").strip()
-
-    # Headline: take the first 2-3 words of the scene, uppercased
-    if scene:
-        words = scene.split()
-        headline = " ".join(words[:3]).upper()
-    else:
-        headline = "LOFI GOLF"
-
-    # Subtitle: use mood/genre or fallback
-    subtitle = mood if mood else "Fairway Frequencies"
+        subtitle = match.group(1).strip().rstrip("⛳").strip()
 
     return headline, subtitle
 
