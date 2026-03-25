@@ -1,0 +1,39 @@
+# API keys — never commit these
+.env
+
+# YouTube OAuth token (saved after first login)
+.youtube_token.json
+
+# Generated output files (too large for git)
+output/
+runs/
+logs/
+
+# Large asset files — keep folder structure via .gitkeep files
+assets/midjourney_images/*
+!assets/midjourney_images/.gitkeep
+assets/music/*
+!assets/music/.gitkeep
+assets/sounds/*
+!assets/sounds/.gitkeep
+assets/kling_clips/*
+!assets/kling_clips/.gitkeep
+
+# Python virtual environment
+venv/
+.venv/
+
+# Claude Code local settings (machine-specific)
+.claude/
+
+# Log files
+*.log
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+
+# OS junk
+.DS_Store
+Thumbs.db

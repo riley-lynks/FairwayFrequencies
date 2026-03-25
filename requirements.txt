@@ -1,0 +1,48 @@
+# =============================================================================
+# requirements.txt — Python Dependencies for Fairway Frequencies
+# =============================================================================
+# INSTALL ALL DEPENDENCIES WITH:
+#   pip install -r requirements.txt
+#
+# WHAT EACH PACKAGE DOES:
+# =============================================================================
+
+# Anthropic Claude API — for orchestration and metadata generation
+# This is the official library from Anthropic (the company behind Claude)
+anthropic>=0.40.0
+
+# Requests — for making HTTP API calls (BFL, Kling, Luma, Mubert, Freesound)
+# The de-facto standard Python library for web requests
+requests>=2.31.0
+
+# Python-dotenv — for reading API keys from your .env file
+# Lets us use os.getenv() to safely read secrets without hardcoding them
+python-dotenv>=1.0.0
+
+# Pillow — for thumbnail image processing (resize, saturation boost, vignette)
+# The standard Python image manipulation library (PIL = Python Imaging Library)
+Pillow>=10.0.0
+
+# PyJWT — for generating JWT authentication tokens for Kling API
+# JWT = JSON Web Token, used for secure API authentication
+PyJWT>=2.8.0
+
+# NumPy — used in thumbnail_gen.py for the vignette effect
+# Mathematical arrays — makes image processing fast and clean
+numpy>=1.24.0
+
+# Flask — the web server that serves index.html and the API endpoints
+# Lets you run `python server.py` and open the control panel in a browser
+flask>=3.0.0
+
+# Flask-CORS — allows the browser to make API calls to the Flask server
+# Without this, browsers block requests from one port to another (CORS policy)
+flask-cors>=4.0.0
+
+# =============================================================================
+# OPTIONAL — only needed for YouTube upload (--upload flag)
+# Install these separately if you want YouTube integration:
+#   pip install google-api-python-client google-auth-oauthlib
+# =============================================================================
+# google-api-python-client>=2.100.0
+# google-auth-oauthlib>=1.1.0

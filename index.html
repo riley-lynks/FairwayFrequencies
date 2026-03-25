@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fairway Frequencies — Control Panel</title>
+
+  <!-- React 18 (the UI library) — loaded from CDN, no install needed -->
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+
+  <!-- Babel Standalone — compiles the JSX syntax in the browser -->
+  <!-- WHY Babel? The .jsx file uses JSX syntax (HTML-in-JS) which browsers
+       don't understand natively. Babel translates it to regular JavaScript. -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    /* =====================================================================
+       CSS CUSTOM PROPERTIES (Design Tokens)
+       These are the variables used throughout fairway_control_panel.jsx.
+       Designed to look clean on both light and dark OS themes.
+       ===================================================================== */
+    :root {
+      --color-text-primary:     #1a1a2e;
+      --color-text-secondary:   #4a5568;
+      --color-text-tertiary:    #718096;
+      --color-background:       #f7f9f6;
+      --color-background-secondary: #ffffff;
+      --color-border-tertiary:  #e2e8f0;
+      --color-border-secondary: #cbd5e0;
+      --color-accent:           #2D6A4F;
+      --color-accent-light:     #D8F3DC;
+      --color-gold:             #B08D57;
+    }
+
+    /* Respect OS dark mode preference */
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --color-text-primary:     #e8edf3;
+        --color-text-secondary:   #a0aec0;
+        --color-text-tertiary:    #718096;
+        --color-background:       #0f1923;
+        --color-background-secondary: #1a2535;
+        --color-border-tertiary:  #2d3748;
+        --color-border-secondary: #4a5568;
+        --color-accent-light:     #1a3a2a;
+      }
+    }
+
+    /* =====================================================================
+       BASE STYLES
+       ===================================================================== */
+    *, *::before, *::after {
+      box-sizing: border-box;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      min-height: 100vh;
+      background: var(--color-background);
+      color: var(--color-text-primary);
+    }
+
+    body {
+      font-family: 'DM Sans', 'Segoe UI', 'Inter', system-ui, sans-serif;
+      font-size: 15px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Scrollbar styling */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--color-border-secondary); border-radius: 3px; }
+
+    /* =====================================================================
+       LAYOUT
+       ===================================================================== */
+    #root {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 0 20px 60px;
+    }
+
+    /* =====================================================================
+       STATUS BAR (shown above the component)
+       ===================================================================== */
+    #status-bar {
+      background: #1B4332;
+      color: #B08D57;
+      font-size: 12px;
+      font-family: 'DM Mono', 'Consolas', monospace;
+      padding: 8px 20px;
+      display: flex;
+      gap: 20px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .status-dot {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      margin-right: 5px;
+      vertical-align: middle;
+    }
+
+    .status-ok    { background: #48BB78; }
+    .status-warn  { background: #ECC94B; }
+    .status-error { background: #FC8181; }
+
+    /* =====================================================================
+       LOADING STATE
+       ===================================================================== */
+    #loading {
+      text-align: center;
+      padding: 60px 0;
+      color: var(--color-text-tertiary);
+      font-size: 14px;
+    }
+  </style>
+
+  <!-- Google Fonts — DM Sans (matches the component's font) -->
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Serif+Display&family=DM+Mono&display=swap" rel="stylesheet" />
+</head>
+
+<body>
+
+  <!-- Status bar — shows API key status, updated by JS below -->
+  <div id="status-bar">
+    <span>Fairway Frequencies</span>
+    <span id="status-keys">Loading status...</span>
+  </div>
+
+  <!-- Loading indicator (shown while React initializes) -->
+  <div id="loading">Loading control panel...</div>
+
+  <!-- React renders into this div -->
+  <div id="root"></div>
+
+  <!-- Load the React component (JSX) via Babel -->
+  <!-- type="text/babel" tells Babel to compile this script -->
+  <script type="text/babel" src="/fairway_control_panel.jsx" data-type="module"></script>
+
+  <!-- Status bar updater — polls the server for API key status -->
+  <script>
+    // Fetch server status and update the status bar
+    async function updateStatusBar() {
+      try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+        const keys = data.keys;
+
+        const parts = [];
+
+        // FFmpeg
+        parts.push(
+          `<span class="status-dot ${data.ffmpeg ? 'status-ok' : 'status-error'}"></span>FFmpeg`
+        );
+
+        // API keys
+        const keyLabels = {
+          anthropic: 'Claude',
+          kling: 'Kling',
+          bfl: 'Flux',
+          mubert: 'Mubert',
+          freesound: 'Freesound',
+        };
+
+        for (const [key, label] of Object.entries(keyLabels)) {
+          const set = keys[key];
+          // Kling and Anthropic are required; others are optional
+          const required = key === 'anthropic' || key === 'kling';
+          const dotClass = set ? 'status-ok' : (required ? 'status-error' : 'status-warn');
+          parts.push(
+            `<span class="status-dot ${dotClass}"></span>${label}${set ? '' : ' (not set)'}`
+          );
+        }
+
+        document.getElementById('status-keys').innerHTML = parts.join(
+          '<span style="opacity:0.3;margin:0 4px">|</span>'
+        );
+      } catch (e) {
+        document.getElementById('status-keys').textContent = 'Server not responding';
+      }
+    }
+
+    // Update on load and every 30 seconds
+    updateStatusBar();
+    setInterval(updateStatusBar, 30000);
+  </script>
+
+</body>
+</html>

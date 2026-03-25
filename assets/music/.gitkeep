@@ -1,0 +1,2 @@
+# Place pre-generated Suno LoFi music tracks (.mp3 or .wav) here.
+# The pipeline checks this folder first before calling the Mubert API.

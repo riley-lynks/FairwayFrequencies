@@ -1,0 +1,187 @@
+{
+  "_comment": "Fairway Frequencies — Pre-Built Scene Library. All 20 scenes.",
+  "_usage": "Use with: python fairway.py --random  OR  python fairway.py \"[scene description]\"",
+  "_note": "The STYLE_SUFFIX is appended automatically. Do not include it in descriptions here.",
+  "scenes": [
+    {
+      "name": "misty_dawn_links",
+      "description": "Misty dawn on a Scottish links-style golf course, soft fog rolling across the illustrated fairway, ocean visible in the far distance through the mist, early morning light breaking through painted clouds, dew on the grass",
+      "mood": "calm",
+      "time_of_day": "dawn",
+      "season": "autumn",
+      "include_character": "random",
+      "ambience_keywords": ["wind", "coastal birds", "gentle waves", "morning birds"]
+    },
+    {
+      "name": "golden_hour_masters",
+      "description": "Golden hour at an Augusta-style parkland course, vibrant pink and red azaleas lining the illustrated fairway, manicured greens stretching toward a painted horizon, warm amber light casting long soft shadows across the course",
+      "mood": "warm",
+      "time_of_day": "golden_hour",
+      "season": "spring",
+      "include_character": "random",
+      "ambience_keywords": ["birds singing", "gentle breeze", "golf sounds", "distant crowd applause"]
+    },
+    {
+      "name": "rainy_afternoon_parkland",
+      "description": "Light rain on a lush green parkland golf course, illustrated raindrops visible on broad leaves in the foreground, warm cozy overcast painted sky, puddles reflecting the cloudy light on the cart path, a distant clubhouse with warm glowing windows",
+      "mood": "cozy",
+      "time_of_day": "afternoon",
+      "season": "summer",
+      "include_character": "yes",
+      "ambience_keywords": ["soft rain", "rain on leaves", "distant thunder", "wind in trees"]
+    },
+    {
+      "name": "desert_sunrise",
+      "description": "Desert golf course at sunrise, stylized saguaro cacti silhouettes against a breathtaking pink and orange painted sky, sandy bunkers glowing amber in early light, distant red rock formations on the illustrated horizon",
+      "mood": "dramatic",
+      "time_of_day": "dawn",
+      "season": "spring",
+      "include_character": "never",
+      "ambience_keywords": ["desert wind", "cactus wren", "morning birds", "dry breeze"]
+    },
+    {
+      "name": "autumn_new_england",
+      "description": "New England golf course in peak autumn foliage, vibrant red orange and gold painted maple trees lining the fairway, a stone bridge arching over a stream near the 9th hole, illustrated leaves drifting on the breeze, warm nostalgic afternoon light",
+      "mood": "nostalgic",
+      "time_of_day": "afternoon",
+      "season": "autumn",
+      "include_character": "yes",
+      "ambience_keywords": ["leaves rustling", "stream water", "fall birds", "gentle wind"]
+    },
+    {
+      "name": "tropical_paradise",
+      "description": "Tropical island golf course, swaying illustrated palm trees framing the fairway, turquoise ocean visible between the trees, bright tropical flowers in vibrant pink and yellow, a distant sailboat on the painted sea, warm tropical afternoon light",
+      "mood": "bright",
+      "time_of_day": "afternoon",
+      "season": "summer",
+      "include_character": "random",
+      "ambience_keywords": ["ocean waves", "tropical birds", "palm leaves", "sea breeze"]
+    },
+    {
+      "name": "moonlit_fairway",
+      "description": "Moonlit fairway under an illustrated starry night sky, a full moon casting silver-blue light across the quiet course, gentle blue mist drifting over the greens, stars reflected in a still pond near the 18th hole, fireflies near the treeline",
+      "mood": "dreamy",
+      "time_of_day": "night",
+      "season": "summer",
+      "include_character": "yes",
+      "ambience_keywords": ["crickets", "night wind", "owl", "frogs near pond"]
+    },
+    {
+      "name": "winter_frost",
+      "description": "Frost-covered golf course at illustrated dawn, bare stylized trees with crystalline frost on every branch, a frozen pond perfectly reflecting the pale pink winter sky, the fairway dusted in white, warm clubhouse lights glowing in the far distance",
+      "mood": "serene",
+      "time_of_day": "dawn",
+      "season": "winter",
+      "include_character": "never",
+      "ambience_keywords": ["winter silence", "distant birds", "cold wind", "frost crunch"]
+    },
+    {
+      "name": "cherry_blossom_japan",
+      "description": "Japanese-inspired golf course with cherry blossom trees in full bloom lining the fairway, soft pink petals floating through the illustrated air, a wooden arched bridge over a koi pond beside the green, distant misty mountains and a pagoda on the horizon",
+      "mood": "peaceful",
+      "time_of_day": "morning",
+      "season": "spring",
+      "include_character": "yes",
+      "ambience_keywords": ["temple bells distance", "spring birds", "water koi pond", "gentle breeze"]
+    },
+    {
+      "name": "coastal_cliffs_sunset",
+      "description": "Clifftop golf course overlooking the Pacific Ocean at sunset, dramatic illustrated clouds lit with orange and purple, the fairway perched on green cliffs above the crashing painted sea, a flag pin waving in the sea breeze against the spectacular sky",
+      "mood": "epic",
+      "time_of_day": "dusk",
+      "season": "autumn",
+      "include_character": "random",
+      "ambience_keywords": ["ocean waves", "sea birds", "coastal wind", "distant foghorn"]
+    },
+    {
+      "name": "english_countryside",
+      "description": "Rolling English countryside golf course, illustrated stone walls meandering between lush green fairways, sheep grazing on distant hills beyond the rough, a charming thatched-roof starter hut near the first tee, soft overcast English light, wildflowers along the edges",
+      "mood": "charming",
+      "time_of_day": "morning",
+      "season": "summer",
+      "include_character": "never",
+      "ambience_keywords": ["sheep distant", "birdsong countryside", "light wind", "bees flowers"]
+    },
+    {
+      "name": "mountain_alpine",
+      "description": "Alpine golf course surrounded by illustrated snow-capped mountain peaks, wildflower meadows of blue and yellow flowers bordering the fairway, a crystal-clear mountain stream visible beside the 4th hole, crisp morning air with scattered dramatic clouds above the peaks",
+      "mood": "majestic",
+      "time_of_day": "morning",
+      "season": "summer",
+      "include_character": "random",
+      "ambience_keywords": ["mountain stream", "alpine birds", "mountain wind", "distant cowbell"]
+    },
+    {
+      "name": "foggy_practice_range",
+      "description": "Driving range at foggy dawn, individual flag markers emerging from the painted mist at various distances, dew glistening on every blade of grass in the foreground, a row of empty hitting bays, early morning light barely breaking through the thick illustrated fog",
+      "mood": "meditative",
+      "time_of_day": "dawn",
+      "season": "spring",
+      "include_character": "never",
+      "ambience_keywords": ["early birds", "distant golf hits", "morning silence", "soft wind"]
+    },
+    {
+      "name": "storm_approaching",
+      "description": "Dark dramatic illustrated storm clouds building over a vibrant green golf course, the pre-storm golden light creating a spectacular contrast between the brilliant green fairway and the ominous purple-grey sky, wind beginning to bend the illustrated trees, electricity in the painted air",
+      "mood": "moody",
+      "time_of_day": "afternoon",
+      "season": "summer",
+      "include_character": "yes",
+      "ambience_keywords": ["distant thunder", "wind picking up", "storm birds", "leaves blowing"]
+    },
+    {
+      "name": "lakeside_reflection",
+      "description": "Golf course alongside a mirror-still illustrated lake, the entire course and sky perfectly reflected in the glass-smooth water, a family of ducks near the reeds at the water's edge, soft sunrise colors — pink lavender and gold — painting both sky and reflection equally",
+      "mood": "tranquil",
+      "time_of_day": "dawn",
+      "season": "spring",
+      "include_character": "random",
+      "ambience_keywords": ["water birds", "duck quack distant", "light ripples", "morning birds"]
+    },
+    {
+      "name": "vintage_clubhouse_veranda",
+      "description": "View from a grand Victorian clubhouse veranda looking out over the illustrated course, ornate white railings with climbing roses in bloom, comfortable wooden chairs and a small table with a lemonade in the foreground, the manicured course stretching away in warm afternoon light",
+      "mood": "nostalgic",
+      "time_of_day": "afternoon",
+      "season": "summer",
+      "include_character": "yes",
+      "ambience_keywords": ["birdsong garden", "gentle breeze", "distant course sounds", "bees summer"]
+    },
+    {
+      "name": "snowy_holiday",
+      "description": "Light illustrated snow falling softly on a golf course at evening, the greens and fairways buried under a gentle blanket of white, warm golden lights glowing from a distant clubhouse through the falling snow, a row of bare trees dusted in white along the treeline",
+      "mood": "festive",
+      "time_of_day": "dusk",
+      "season": "winter",
+      "include_character": "never",
+      "ambience_keywords": ["soft snow falling", "winter silence", "distant holiday music", "cold wind"]
+    },
+    {
+      "name": "summer_afternoon_sprinklers",
+      "description": "Bright illustrated summer afternoon on a classic parkland course, a sprinkler system creating rainbow arcs of mist over a distant fairway, enormous puffy white clouds in a vivid blue painted sky, butterflies near wildflowers at the rough edge, the greenest grass imaginable",
+      "mood": "cheerful",
+      "time_of_day": "afternoon",
+      "season": "summer",
+      "include_character": "random",
+      "ambience_keywords": ["sprinkler water", "summer birds", "bees insects", "light breeze warm"]
+    },
+    {
+      "name": "hawaiian_volcanic",
+      "description": "Hawaiian golf course with dramatic black lava rock formations along the edges of the illustrated fairway, vibrant tropical flowers in red and orange growing from cracks in the rock, the deep turquoise Pacific Ocean visible beyond the coastal holes, warm tropical breeze bending the palm fronds",
+      "mood": "exotic",
+      "time_of_day": "golden_hour",
+      "season": "spring",
+      "include_character": "never",
+      "ambience_keywords": ["ocean Pacific", "tropical birds", "warm island breeze", "distant waves"]
+    },
+    {
+      "name": "morning_dew_closeup",
+      "description": "Intimate close-up view of a putting green at dawn, enormous illustrated dew drops on every blade of grass catching the first light, a delicate spider web strung between the flag pin and a nearby flower, the rest of the course softly out of focus in the misty distance beyond",
+      "mood": "intimate",
+      "time_of_day": "dawn",
+      "season": "spring",
+      "include_character": "never",
+      "ambience_keywords": ["morning birds close", "dew drips", "light breeze", "insects morning"]
+    }
+  ]
+}
