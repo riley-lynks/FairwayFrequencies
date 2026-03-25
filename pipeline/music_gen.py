@@ -85,18 +85,27 @@ def get_music_track(
     library_tracks = _find_library_tracks()
 
     if library_tracks:
-        local_logger.info(f"  Found {len(library_tracks)} tracks in local library. Using library.")
-        selected_track = random.choice(library_tracks)
-        local_logger.info(f"  Selected: {os.path.basename(selected_track)}")
-
-        # Loop the selected track to fill the target duration
+        local_logger.info(f"  Found {len(library_tracks)} tracks in local library.")
         output_path = os.path.join(audio_dir, "music_looped.wav")
-        _loop_track_to_duration(
-            track_path=selected_track,
-            target_seconds=target_seconds,
-            output_path=output_path,
-            local_logger=local_logger,
-        )
+
+        if len(library_tracks) == 1:
+            # Only one track available — fall back to looping it
+            local_logger.info(f"  Only 1 track — looping: {os.path.basename(library_tracks[0])}")
+            _loop_track_to_duration(
+                track_path=library_tracks[0],
+                target_seconds=target_seconds,
+                output_path=output_path,
+                local_logger=local_logger,
+            )
+        else:
+            # Multiple tracks — sequence them in random order
+            local_logger.info(f"  Sequencing {len(library_tracks)} tracks in random order...")
+            _sequence_tracks_to_duration(
+                tracks=library_tracks,
+                target_seconds=target_seconds,
+                output_path=output_path,
+                local_logger=local_logger,
+            )
 
         return output_path
 
@@ -161,6 +170,101 @@ def _find_library_tracks() -> list:
     found = [f for f in found if not f.endswith(".gitkeep")]
 
     return list(set(found))
+
+
+def _sequence_tracks_to_duration(
+    tracks: list,
+    target_seconds: float,
+    output_path: str,
+    local_logger,
+):
+    """
+    Concatenate multiple tracks in a random shuffled order, cycling through
+    the library until the target duration is reached.
+
+    WHY concat instead of loop? Looping one track sounds repetitive after a
+    few minutes. Cycling through the full library keeps the music fresh for
+    the entire 2-3 hour video.
+
+    Args:
+        tracks:         List of audio file paths in the local library.
+        target_seconds: How many seconds long the output should be.
+        output_path:    Where to save the final sequenced audio.
+        local_logger:   Logger.
+    """
+    # Build a shuffled sequence, cycling through the library until we
+    # have enough total duration to fill the video (plus a small buffer)
+    shuffled = tracks[:]
+    random.shuffle(shuffled)
+
+    sequence = []
+    total = 0.0
+    idx = 0
+    while total < target_seconds + 30:
+        track = shuffled[idx % len(shuffled)]
+        duration = _get_audio_duration(track)
+        sequence.append(track)
+        total += duration
+        idx += 1
+        # Reshuffle each time we cycle through the full library so the
+        # order is different on every pass
+        if idx % len(shuffled) == 0:
+            random.shuffle(shuffled)
+
+    local_logger.info(
+        f"  Sequence: {len(sequence)} tracks, "
+        f"~{total/3600:.1f}h total before trim"
+    )
+
+    # Write an FFmpeg concat list file
+    concat_file = output_path.replace(".wav", "_concat.txt")
+    with open(concat_file, "w", encoding="utf-8") as f:
+        for track_path in sequence:
+            # FFmpeg concat needs forward slashes and single-quote escaping
+            safe = track_path.replace("\\", "/").replace("'", "\\'")
+            f.write(f"file '{safe}'\n")
+
+    # Step 1: Concatenate all tracks into one raw file
+    raw_path = output_path.replace(".wav", "_raw_concat.wav")
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "concat",
+        "-safe", "0",
+        "-i", concat_file,
+        "-t", str(target_seconds + 10),   # Small buffer — trim precisely in step 2
+        "-c:a", "pcm_s16le",
+        "-ar", "44100",
+        raw_path,
+    ]
+    try:
+        subprocess.run(cmd, capture_output=True, text=True, check=True,
+                       creationflags=subprocess.CREATE_NO_WINDOW)
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"FFmpeg concat failed: {e.stderr[-300:]}")
+    finally:
+        if os.path.exists(concat_file):
+            os.remove(concat_file)
+
+    # Step 2: Trim to exact duration and normalize to -14 LUFS
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", raw_path,
+        "-t", str(target_seconds),
+        "-af", f"loudnorm=I={TARGET_LUFS}:LRA=11:TP=-1.5",
+        "-ar", "44100",
+        "-c:a", "pcm_s16le",
+        output_path,
+    ]
+    try:
+        subprocess.run(cmd, capture_output=True, text=True, check=True,
+                       creationflags=subprocess.CREATE_NO_WINDOW)
+        os.remove(raw_path)
+        local_logger.info(
+            f"  ✓ Music ready: {len(sequence)} tracks, "
+            f"{target_seconds/3600:.2f}h, normalized to {TARGET_LUFS} LUFS"
+        )
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"FFmpeg normalize failed: {e.stderr[-300:]}")
 
 
 def _loop_track_to_duration(
