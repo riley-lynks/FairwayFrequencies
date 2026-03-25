@@ -682,6 +682,7 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
             output_dir=config.OUTPUT_DIR,
             final_video_path=final_video_path,
             api_key=config.BFL_API_KEY,
+            metadata=metadata,
             logger=logger,
         )
 

@@ -5,37 +5,38 @@
 #   Generate a 1280x720 thumbnail image for the YouTube video.
 #
 # STRATEGY:
-#   Use the base image we already generated as the foundation.
-#   Apply a saturation boost (+15%) and slight vignette using Pillow
-#   to make the thumbnail "pop" more than the video frame.
+#   Use the base image as the foundation, then add a text overlay in the
+#   style of popular study/chill music channels:
+#     - Dark gradient on the left third for readability
+#     - Large bold headline (2-3 words from the video title)
+#     - Smaller subtitle (mood/genre)
+#     - "Fairway Frequencies" channel branding
 #
-# WHY boost saturation for the thumbnail?
-#   YouTube thumbnails compete in a sea of other thumbnails. Your animated
-#   scene looks beautiful at full size, but at 320×180 pixels (how thumbnails
-#   often display in search results), more vibrant colors catch the eye better.
-#   We keep the boost subtle — just +15% saturation — so it looks intentional,
-#   not garish.
-#
-# WHY use the base image instead of generating a new one?
-#   - Faster (no new API call needed)
-#   - Consistent with the video content (viewer knows what they're clicking into)
-#   - The base image is already excellent quality (it's the whole video's visual)
-#   If IMAGE_SOURCE = "flux", we optionally generate a fresh thumbnail via the API.
+# WHY text overlays? Competitor research shows the top study/lofi channels
+# all use bold keyword text on thumbnails. At small sizes (how thumbnails
+# display in search), the text communicates instantly what the video is.
 # =============================================================================
 
 import os
+import re
 import shutil
 import logging
-import subprocess
-from PIL import Image, ImageEnhance  # Pillow library for image processing
+from PIL import Image, ImageEnhance, ImageDraw, ImageFont
 
 import config
 
 logger = logging.getLogger("fairway.thumbnail_gen")
 
-THUMBNAIL_WIDTH = 1280   # YouTube thumbnail dimensions
+THUMBNAIL_WIDTH  = 1280
 THUMBNAIL_HEIGHT = 720
-SATURATION_BOOST = 1.15  # 15% saturation increase (1.0 = no change)
+SATURATION_BOOST = 1.15
+
+# Font paths — Arial Bold preferred, Impact as fallback
+_FONT_PATHS = [
+    "C:/Windows/Fonts/arialbd.ttf",
+    "C:/Windows/Fonts/impact.ttf",
+    "C:/Windows/Fonts/arial.ttf",
+]
 
 
 def generate_thumbnail(
@@ -46,6 +47,7 @@ def generate_thumbnail(
     output_dir: str,
     final_video_path: str,
     api_key: str,
+    metadata: dict = None,
     logger: logging.Logger = None,
 ) -> str:
     """
@@ -59,6 +61,7 @@ def generate_thumbnail(
         output_dir:        Final output directory (thumbnail saved here).
         final_video_path:  Path to the final video (thumbnail uses same base name).
         api_key:           BFL API key (used only if flux and we generate fresh).
+        metadata:          Video metadata dict (used for title-based text overlay).
         logger:            Logger for progress messages.
 
     Returns:
@@ -66,18 +69,17 @@ def generate_thumbnail(
     """
     local_logger = logger or logging.getLogger("fairway.thumbnail_gen")
 
-    # Determine thumbnail output path — same name as video, .png extension
     video_basename = os.path.basename(final_video_path).replace(".mp4", "")
     thumbnail_path = os.path.join(output_dir, f"{video_basename}_thumbnail.png")
     os.makedirs(output_dir, exist_ok=True)
 
     local_logger.info("  Processing thumbnail from base image...")
 
-    # Process the base image into a thumbnail
     try:
         processed_path = _process_base_image_for_thumbnail(
             base_image_path=base_image_path,
             output_path=thumbnail_path,
+            metadata=metadata,
             local_logger=local_logger,
         )
         local_logger.info(f"  ✓ Thumbnail: {thumbnail_path}")
@@ -85,13 +87,11 @@ def generate_thumbnail(
 
     except Exception as e:
         local_logger.warning(f"  ⚠️ Thumbnail generation failed: {e}")
-        # Fallback: just copy and resize the base image
         try:
             _simple_resize_thumbnail(base_image_path, thumbnail_path)
             return thumbnail_path
         except Exception as e2:
             local_logger.warning(f"  ⚠️ Thumbnail fallback also failed: {e2}")
-            # Last resort: just copy the base image as-is
             shutil.copy2(base_image_path, thumbnail_path)
             return thumbnail_path
 
@@ -99,50 +99,38 @@ def generate_thumbnail(
 def _process_base_image_for_thumbnail(
     base_image_path: str,
     output_path: str,
+    metadata: dict,
     local_logger,
 ) -> str:
     """
-    Process the base image into a polished YouTube thumbnail.
+    Process the base image into a polished YouTube thumbnail with text overlay.
 
     Steps:
     1. Open and resize to 1280x720
-    2. Boost saturation by 15% (makes colors pop in search results)
-    3. Apply a subtle vignette (darkens edges slightly, draws eye to center)
-    4. Save as PNG
-
-    Args:
-        base_image_path: Source image.
-        output_path:     Where to save the thumbnail.
-        local_logger:    Logger.
-
-    Returns:
-        Path to the saved thumbnail.
+    2. Boost saturation by 15%
+    3. Apply subtle vignette
+    4. Add dark gradient on the left for text readability
+    5. Draw bold headline + subtitle + channel name text
+    6. Save as PNG
     """
-    # Open the image with Pillow
-    # WHY Pillow? It's the standard Python image processing library.
-    # Simple, well-documented, and handles all common formats.
     img = Image.open(base_image_path)
 
-    # Convert to RGB if needed (PNG images can be RGBA — 4 channels)
-    # YouTube thumbnails should be RGB — remove transparency
     if img.mode in ("RGBA", "P"):
         img = img.convert("RGB")
 
-    # Resize to 1280x720, maintaining aspect ratio and cropping edges if needed
-    # WHY LANCZOS? It's the highest-quality resize algorithm in Pillow.
-    # Important for thumbnails — they get scrutinized at varying sizes.
     img = _resize_and_crop(img, THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT)
 
-    # Boost saturation — makes colors more vivid/eye-catching in search results
-    # ImageEnhance.Color: 1.0 = original, >1.0 = more saturated, <1.0 = less
     enhancer = ImageEnhance.Color(img)
     img = enhancer.enhance(SATURATION_BOOST)
 
-    # Apply subtle vignette (optional — darkens edges slightly)
-    # This is a common thumbnail technique that draws the eye to the center
-    img = _apply_vignette(img, strength=0.15)
+    img = _apply_vignette(img, strength=0.2)
 
-    # Save as PNG (lossless — thumbnails deserve maximum quality)
+    # Extract text lines from metadata
+    headline, subtitle = _extract_text_from_metadata(metadata)
+
+    # Add gradient + text overlay
+    img = _add_text_overlay(img, headline, subtitle)
+
     img.save(output_path, "PNG", optimize=True)
 
     size_kb = os.path.getsize(output_path) / 1024
@@ -151,97 +139,191 @@ def _process_base_image_for_thumbnail(
     return output_path
 
 
-def _resize_and_crop(img: Image.Image, target_width: int, target_height: int) -> Image.Image:
+def _extract_text_from_metadata(metadata: dict) -> tuple[str, str]:
     """
-    Resize and center-crop an image to the target dimensions.
+    Extract a short headline and subtitle from the video title.
 
-    This is the "cover" resize behavior — fills the target exactly
-    without stretching or leaving black bars. Edges may be cropped
-    if the aspect ratio doesn't match.
-
-    Args:
-        img:          Input PIL image.
-        target_width:  Target width in pixels.
-        target_height: Target height in pixels.
+    Title pattern: "Fairway Frequencies — [Scene] | [Mood] ⛳"
 
     Returns:
-        Resized and cropped PIL image.
+        (headline, subtitle) — e.g. ("GOLDEN HOUR", "Nostalgic LoFi Golf")
     """
+    if not metadata:
+        return "LOFI GOLF", "Fairway Frequencies"
+
+    title = metadata.get("title", "")
+
+    # Extract scene part: between "— " and " |"
+    scene = ""
+    mood  = ""
+    match = re.search(r"—\s*(.+?)\s*\|", title)
+    if match:
+        scene = match.group(1).strip()
+
+    # Extract mood/genre part: after "| " and before " ⛳"
+    match2 = re.search(r"\|\s*(.+?)(?:\s*⛳.*)?$", title)
+    if match2:
+        mood = match2.group(1).strip().rstrip("⛳").strip()
+
+    # Headline: take the first 2-3 words of the scene, uppercased
+    if scene:
+        words = scene.split()
+        headline = " ".join(words[:3]).upper()
+    else:
+        headline = "LOFI GOLF"
+
+    # Subtitle: use mood/genre or fallback
+    subtitle = mood if mood else "Fairway Frequencies"
+
+    return headline, subtitle
+
+
+def _load_font(size: int) -> ImageFont.FreeTypeFont:
+    """Load the best available bold font at the given size."""
+    for path in _FONT_PATHS:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, size)
+            except Exception:
+                continue
+    return ImageFont.load_default()
+
+
+def _add_text_overlay(img: Image.Image, headline: str, subtitle: str) -> Image.Image:
+    """
+    Add a text overlay to the thumbnail in the style of top study/lofi channels.
+
+    Layout:
+      - Semi-transparent dark gradient on the left ~55% of the image
+      - Large bold headline in the upper-left area
+      - Smaller subtitle below
+      - "Fairway Frequencies" channel name at the bottom-left
+
+    Args:
+        img:      The base thumbnail image (1280x720).
+        headline: Large bold text (e.g. "GOLDEN HOUR").
+        subtitle: Smaller descriptor text (e.g. "Nostalgic LoFi Golf").
+
+    Returns:
+        Image with overlay applied.
+    """
+    import numpy as np
+
+    w, h = img.size
+
+    # --- Dark gradient overlay on left portion ---
+    img_array = np.array(img, dtype=np.float32)
+
+    gradient_width = int(w * 0.58)   # Covers left 58% of image
+    for x in range(gradient_width):
+        # Starts at 65% opacity at left edge, fades to 0 at gradient_width
+        opacity = 0.65 * (1.0 - (x / gradient_width) ** 0.6)
+        img_array[:, x, :] *= (1.0 - opacity)
+
+    img = Image.fromarray(np.clip(img_array, 0, 255).astype(np.uint8))
+
+    # --- Draw text ---
+    draw = ImageDraw.Draw(img)
+
+    pad_x = 60    # Left padding
+    pad_y = 55    # Top padding
+
+    # Headline — large bold text
+    font_headline = _load_font(108)
+    _draw_text_with_shadow(draw, (pad_x, pad_y), headline, font_headline,
+                            fill=(255, 255, 255), shadow_offset=3, shadow_opacity=160)
+
+    # Subtitle — medium text below headline
+    font_subtitle = _load_font(52)
+    headline_bbox = draw.textbbox((pad_x, pad_y), headline, font=font_headline)
+    subtitle_y = headline_bbox[3] + 18
+    _draw_text_with_shadow(draw, (pad_x, subtitle_y), subtitle, font_subtitle,
+                            fill=(220, 220, 220), shadow_offset=2, shadow_opacity=140)
+
+    # Channel branding — small, bottom-left
+    font_brand = _load_font(34)
+    brand_y = h - 54
+    _draw_text_with_shadow(draw, (pad_x, brand_y), "Fairway Frequencies", font_brand,
+                            fill=(180, 210, 180), shadow_offset=2, shadow_opacity=120)
+
+    return img
+
+
+def _draw_text_with_shadow(
+    draw: ImageDraw.ImageDraw,
+    position: tuple,
+    text: str,
+    font: ImageFont.FreeTypeFont,
+    fill: tuple,
+    shadow_offset: int = 3,
+    shadow_opacity: int = 150,
+):
+    """
+    Draw text with a drop shadow for readability against any background.
+
+    Args:
+        draw:           ImageDraw instance.
+        position:       (x, y) top-left of the text.
+        text:           Text to draw.
+        font:           Font to use.
+        fill:           Text color as RGB tuple.
+        shadow_offset:  How many pixels to offset the shadow.
+        shadow_opacity: Shadow darkness (0=transparent, 255=black).
+    """
+    x, y = position
+    shadow_color = (0, 0, 0, shadow_opacity)
+
+    # Draw shadow slightly offset
+    draw.text((x + shadow_offset, y + shadow_offset), text,
+              font=font, fill=shadow_color)
+
+    # Draw main text on top
+    draw.text((x, y), text, font=font, fill=fill)
+
+
+def _resize_and_crop(img: Image.Image, target_width: int, target_height: int) -> Image.Image:
+    """Resize and center-crop to exact target dimensions (cover behavior)."""
     target_ratio = target_width / target_height
     img_ratio = img.width / img.height
 
     if img_ratio > target_ratio:
-        # Image is wider than target — scale by height, crop sides
         new_height = target_height
         new_width = int(img_ratio * new_height)
     else:
-        # Image is taller than target — scale by width, crop top/bottom
         new_width = target_width
         new_height = int(new_width / img_ratio)
 
-    # Resize using Lanczos (highest quality algorithm)
     img = img.resize((new_width, new_height), Image.LANCZOS)
 
-    # Center crop to exact target size
     left = (new_width - target_width) // 2
-    top = (new_height - target_height) // 2
-    right = left + target_width
-    bottom = top + target_height
+    top  = (new_height - target_height) // 2
 
-    return img.crop((left, top, right, bottom))
+    return img.crop((left, top, left + target_width, top + target_height))
 
 
-def _apply_vignette(img: Image.Image, strength: float = 0.15) -> Image.Image:
-    """
-    Apply a subtle radial vignette to the image.
-
-    A vignette darkens the corners and edges, drawing the viewer's eye
-    to the center of the thumbnail. Common in photography and thumbnails.
-
-    Args:
-        img:      Input PIL image.
-        strength: How dark the vignette gets at the edges (0.0-1.0).
-                  0.15 = 15% darkening at edges — very subtle.
-
-    Returns:
-        Image with vignette applied.
-    """
+def _apply_vignette(img: Image.Image, strength: float = 0.2) -> Image.Image:
+    """Apply a radial vignette — darkens edges, draws eye to center."""
     try:
         import numpy as np
 
-        # Create a radial gradient mask
-        # Values range from 1.0 (center, no darkening) to (1-strength) (edges)
         w, h = img.size
         Y, X = np.ogrid[:h, :w]
-
-        # Normalized distance from center (0 = center, 1 = corner)
         cx, cy = w / 2, h / 2
         dist = np.sqrt(((X - cx) / cx) ** 2 + ((Y - cy) / cy) ** 2)
         dist = np.clip(dist, 0, 1)
-
-        # Vignette multiplier: 1.0 at center, (1 - strength) at edges
         vignette = 1.0 - (strength * dist)
 
-        # Apply vignette to each channel
         img_array = np.array(img, dtype=np.float32)
         img_array *= vignette[:, :, np.newaxis]
-        img_array = np.clip(img_array, 0, 255).astype(np.uint8)
 
-        return Image.fromarray(img_array)
+        return Image.fromarray(np.clip(img_array, 0, 255).astype(np.uint8))
 
     except ImportError:
-        # numpy not available — skip vignette
         return img
 
 
 def _simple_resize_thumbnail(source_path: str, output_path: str):
-    """
-    Fallback: simple resize without enhancement.
-
-    Args:
-        source_path: Source image path.
-        output_path: Output thumbnail path.
-    """
+    """Fallback: simple resize without enhancement."""
     img = Image.open(source_path)
     if img.mode in ("RGBA", "P"):
         img = img.convert("RGB")
