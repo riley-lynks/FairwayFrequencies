@@ -233,6 +233,48 @@ def load_scene_library() -> list:
 
 
 # =============================================================================
+# INTERMEDIATE FILE CLEANUP
+# =============================================================================
+def _cleanup_intermediates(run_dir: str, logger: logging.Logger):
+    """
+    Delete large intermediate files after a successful final render.
+
+    The batch files and assembled video are only needed during production.
+    Once the final MP4 exists, these can be safely removed to reclaim disk space.
+
+    Keeps: generation.log, .state.json, base_image.png, audio/final_audio.wav
+    Deletes: batches/ folder, assembled_video.mp4, audio/music_looped.wav
+    """
+    freed = 0
+
+    # Delete the batches folder (260 MP4s — by far the biggest space hog)
+    batches_dir = os.path.join(run_dir, "batches")
+    if os.path.exists(batches_dir):
+        size = sum(os.path.getsize(f) for f in Path(batches_dir).glob("**/*") if f.is_file())
+        shutil.rmtree(batches_dir)
+        freed += size
+        logger.debug(f"  Deleted batches/: {size / (1024**3):.2f}GB freed")
+
+    # Delete the assembled video (video-only, before audio was added)
+    assembled = os.path.join(run_dir, "assembled_video.mp4")
+    if os.path.exists(assembled):
+        size = os.path.getsize(assembled)
+        os.remove(assembled)
+        freed += size
+        logger.debug(f"  Deleted assembled_video.mp4: {size / (1024**3):.2f}GB freed")
+
+    # Delete the intermediate looped music file
+    looped = os.path.join(run_dir, "audio", "music_looped.wav")
+    if os.path.exists(looped):
+        size = os.path.getsize(looped)
+        os.remove(looped)
+        freed += size
+        logger.debug(f"  Deleted music_looped.wav: {size / (1024**2):.0f}MB freed")
+
+    logger.info(f"  ✓ Cleaned up intermediates: {freed / (1024**3):.2f}GB freed")
+
+
+# =============================================================================
 # MAIN PIPELINE
 # =============================================================================
 def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state: dict):
@@ -592,6 +634,7 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
         state["final_video"] = final_video_path
         save_state(run_dir, state)
         logger.info(f"  ✓ Final video: {final_video_path}")
+        _cleanup_intermediates(run_dir, logger)
     else:
         logger.info("[Stage 8/11] Final video — loaded from saved state")
         final_video_path = state["final_video"]
