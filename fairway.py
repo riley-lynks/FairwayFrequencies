@@ -649,6 +649,7 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
         metadata = generate_metadata(
             scene_prompt=prompt,
             orchestration=orchestration,
+            image_path=base_image_path,
             api_key=config.ANTHROPIC_API_KEY,
             claude_model=config.CLAUDE_MODEL,
             logger=logger,

@@ -18,8 +18,10 @@
 #   - is_made_for_kids: False (relaxation content, not kids content)
 # =============================================================================
 
+import base64
 import json
 import logging
+import os
 import time
 import anthropic
 import config
@@ -32,6 +34,7 @@ def generate_metadata(
     orchestration: dict,
     api_key: str,
     claude_model: str,
+    image_path: str = None,
     logger: logging.Logger = None,
 ) -> dict:
     """
@@ -42,6 +45,7 @@ def generate_metadata(
         orchestration:  The full orchestration dict (has mood, time_of_day, etc.)
         api_key:        Anthropic API key.
         claude_model:   Claude model identifier.
+        image_path:     Path to the selected base image (used for vision-based description).
         logger:         Logger for progress messages.
 
     Returns:
@@ -62,25 +66,42 @@ def generate_metadata(
     except FileNotFoundError:
         system_prompt = _get_inline_metadata_prompt()
 
-    user_message = f"""Scene: "{scene_prompt}"
+    user_message = f"""Scene prompt: "{scene_prompt}"
 Mood: {mood}
 Time of day: {time_of_day}
 Season: {season}
 Has character: {has_character}
 Channel name: Fairway Frequencies
 
+The image attached is the exact frame used in this video — base the description on what you actually see in it, not on the prompt text.
+{f'Note: {character_note}.' if character_note else ''}
+
 Generate YouTube metadata for this LoFi Golf video.
-{f'Include: "{character_note}"' if character_note else ''}
 
 Remember:
 - Title should be under 70 characters
-- Description should hook viewers in the first 2 lines (they appear before "...more")
-- Include 20-30 relevant tags
+- Description must hook viewers in the first 2 lines (they appear before "...more")
+- Description body must weave in searchable keyword phrases naturally (lofi, study music, golf, chill, focus music, etc.)
+- Include 25-30 tags
 - This is a 2-3 hour relaxation/study music video"""
 
     local_logger.debug("  Calling Claude for metadata generation...")
 
     client = anthropic.Anthropic(api_key=api_key)
+
+    # Build the message content — include the image if available
+    message_content: list = []
+    if image_path and os.path.exists(image_path):
+        ext = os.path.splitext(image_path)[1].lower().lstrip(".")
+        media_type = {"jpg": "image/jpeg", "jpeg": "image/jpeg"}.get(ext, "image/png")
+        with open(image_path, "rb") as f:
+            image_data = base64.standard_b64encode(f.read()).decode("utf-8")
+        message_content.append({
+            "type": "image",
+            "source": {"type": "base64", "media_type": media_type, "data": image_data},
+        })
+        local_logger.debug(f"  Attaching image for vision: {os.path.basename(image_path)}")
+    message_content.append({"type": "text", "text": user_message})
 
     for attempt in range(config.MAX_RETRIES):
         try:
@@ -88,7 +109,7 @@ Remember:
                 model=claude_model,
                 max_tokens=2000,
                 system=system_prompt,
-                messages=[{"role": "user", "content": user_message}],
+                messages=[{"role": "user", "content": message_content}],
             )
 
             response_text = response.content[0].text.strip()

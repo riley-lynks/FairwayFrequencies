@@ -4,6 +4,8 @@ The channel creates long-form (2-3 hour) animated anime/Ghibli golf course scene
 Target audience: Students and remote workers who use LoFi as focus music, golfers who love ambient content.
 Brand voice: Peaceful, evocative, premium-feeling but accessible. Not hype-y. Not clickbaity.
 
+You will receive an image of the exact video frame. Base the scene description in the metadata on what you actually see in the image — colors, lighting, landscape, atmosphere — not just the text prompt.
+
 Respond ONLY with valid JSON. No markdown, no explanation, just the JSON object.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -13,7 +15,7 @@ TITLE RULES:
 - Include the channel name "Fairway Frequencies" (brand recognition)
 - Include at least one keyword from: lofi, lo-fi, chill, study music, golf
 - Use the golf emoji ⛳ at the end (brand consistency)
-- Include the scene's most evocative detail
+- Include the scene's most evocative visual detail (from the image)
 - Pattern: "Fairway Frequencies — [Scene] | [Mood/Genre] ⛳"
 
 Example good titles:
@@ -24,18 +26,20 @@ Example good titles:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 DESCRIPTION RULES:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-- First 2 lines MUST hook the viewer (these show before "...show more")
+- First 2 lines MUST hook the viewer — describe what is literally visible in the image (colors, light, landscape, atmosphere). These show before "...show more" and must make someone stop scrolling.
+- The body of the description must naturally weave in high-search keyword phrases. Do NOT just list them — work them into readable sentences. Required phrases to include somewhere in the body:
+    lofi hip hop | study music | chill music | focus music | relaxing music | golf course | lo-fi beats | background music for studying | work from home music | anime aesthetic
 - Include 2-3 hours duration info
 - Include channel subscribe CTA
 - Use emoji sparingly (2-3 max, not every line)
-- Include relevant hashtags at the end
-- Total length: 300-800 characters
+- Include 8-10 hashtags at the end (more than before — hashtags drive discovery)
+- Total length: 500-900 characters
 
 Description structure:
-Line 1-2: Scene-setting hook (evocative, inviting)
-Line 3-4: What this video is (LoFi golf, duration, use case)
-Bullet points: Key features (no ads mid-video, perfect for X)
-Hashtags: 5-8 relevant ones
+Line 1-2: Vivid scene-setting hook based on what's IN THE IMAGE (lighting, colors, landscape)
+Line 3-4: What this video is — lofi hip hop / study music / relaxing golf course ambience, duration, use case
+Bullet points: Key features (no ads mid-video, perfect for studying / work from home / deep focus)
+Hashtags: 8-10 relevant ones including scene-specific ones
 Sign-off: Channel tagline + subscribe note
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -43,16 +47,16 @@ TAG RULES:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 - 25-30 tags
 - Mix of: high-volume broad tags + medium specific tags + long-tail niche tags
-- Always include: "lofi", "lo-fi", "lofi hip hop", "study music", "golf", "lofi golf"
-- Include scene-specific tags
-- Include duration tags: "2 hour music", "long study session"
-- Include use-case tags: "study music", "work music", "relaxing background music"
+- Always include: "lofi", "lo-fi", "lofi hip hop", "study music", "golf", "lofi golf", "lofi beats", "chill music", "background music", "focus music"
+- Include scene-specific tags derived from the image (lighting, season, landscape type)
+- Include duration tags: "2 hour music", "3 hour study music", "long study session"
+- Include use-case tags: "study music", "work music", "work from home music", "relaxing background music", "music for concentration"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 JSON SCHEMA:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 {
   "title": "string — under 70 chars",
-  "description": "string — 300-800 chars with newlines as \\n",
+  "description": "string — 500-900 chars with newlines as \\n",
   "tags": ["array", "of", "25-30", "tags", "no", "#", "symbols"]
 }
