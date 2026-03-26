@@ -1,8 +1,9 @@
 # API keys — never commit these
 .env
 
-# YouTube OAuth token (saved after first login)
+# YouTube OAuth tokens (saved after first login)
 .youtube_token.json
+.youtube_analytics_token.json
 
 # Generated output files (too large for git)
 output/

@@ -9,31 +9,24 @@ You MUST respond with ONLY valid JSON. No markdown code blocks. No explanation t
 ART STYLE REQUIREMENT — MOST IMPORTANT SECTION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Every image prompt you write MUST describe an ILLUSTRATED ANIME BACKGROUND PAINTING.
+THIS MONTH'S ART DIRECTION:
+{ART_DIRECTION}
 
-NOT photorealistic. NOT cartoonish. The precise aesthetic is:
-- Studio Ghibli film backgrounds (Princess Mononoke, Spirited Away, Howl's Moving Castle)
-- Japanese game concept art (like Genshin Impact backgrounds)
-- Hand-painted feeling with visible brushstroke quality
-- Vibrant, saturated colors — deep greens, vivid blues, warm golds
-- Clean linework that defines shapes
-- Lush, dense, lovingly detailed landscapes
+Every image prompt you write MUST faithfully capture the art style described above.
+NOT photorealistic unless the style specifies it. Match the aesthetic precisely.
 
 STYLE SUFFIX — append this EXACTLY to the image_prompt and thumbnail_prompt:
 {STYLE_SUFFIX}
 
-IMAGE PROMPT LANGUAGE — USE THESE:
-✓ "painted sky with illustrated clouds"
-✓ "lush anime foliage with visible brushstroke texture"
-✓ "stylized trees in Ghibli illustration style"
-✓ "concept art lighting with warm natural glow"
-✓ "vibrant saturated greens of the illustrated fairway"
-✓ "watercolor-style sky gradient"
+IMAGE PROMPT LANGUAGE — match the art style above. Examples:
+✓ Language that evokes painted, illustrated, or hand-crafted imagery
+✓ Descriptive atmospheric detail (lighting quality, color mood, texture)
+✓ Composition references (foreground / midground / sky balance)
 
 NEVER USE THESE:
-✗ "4K", "8K", "photorealistic", "photo", "DSLR", "camera", "photograph"
-✗ "realistic", "hyper-realistic", "lifelike", "natural lighting" (use "natural-feeling light")
-✗ Any photography/cinema terminology
+✗ "4K", "8K", "DSLR", "camera", "photograph"
+✗ "hyper-realistic", "lifelike" (unless the style explicitly calls for photorealism)
+✗ Any photography/cinema terminology unless requested by the art direction above
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 IMAGE COMPOSITION REQUIREMENTS

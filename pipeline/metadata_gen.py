@@ -29,11 +29,44 @@ import config
 logger = logging.getLogger("fairway.metadata_gen")
 
 
+def _chapter_timestamps(duration_hours: float) -> list[tuple[int, str]]:
+    """
+    Return (seconds, label) pairs at 30-minute intervals for the video duration.
+    Always starts at 0:00. Minimum 3 chapters — if duration is under 1h30, we
+    still produce 3 by halving the interval.
+    """
+    total_seconds = int(duration_hours * 3600)
+    interval = 1800  # 30 minutes
+
+    # Ensure at least 3 chapters
+    while total_seconds // interval < 2:
+        interval //= 2
+
+    stamps = []
+    t = 0
+    while t < total_seconds:
+        h = t // 3600
+        m = (t % 3600) // 60
+        label = f"{h}:{m:02d}:00" if h > 0 else f"0:{m:02d}"
+        stamps.append((t, label))
+        t += interval
+    return stamps
+
+
+def _append_chapters(description: str, stamps: list[tuple[int, str]], names: list[str]) -> str:
+    """Append a YouTube chapter block to the description."""
+    lines = ["\n\n📍 CHAPTERS"]
+    for (_, ts), name in zip(stamps, names):
+        lines.append(f"{ts} {name}")
+    return description + "\n".join(lines)
+
+
 def generate_metadata(
     scene_prompt: str,
     orchestration: dict,
     api_key: str,
     claude_model: str,
+    duration_hours: float = 2.0,
     image_path: str = None,
     logger: logging.Logger = None,
 ) -> dict:
@@ -59,6 +92,9 @@ def generate_metadata(
     has_character = orchestration.get("has_character", False)
     character_note = " featuring our signature golfer overlooking the course" if has_character else ""
 
+    stamps = _chapter_timestamps(duration_hours)
+    timestamps_str = ", ".join(ts for _, ts in stamps)
+
     # Load the metadata system prompt
     try:
         with open("prompts/metadata_system.txt", "r", encoding="utf-8") as f:
@@ -71,6 +107,8 @@ Mood: {mood}
 Time of day: {time_of_day}
 Season: {season}
 Has character: {has_character}
+Video duration: {duration_hours} hours
+Chapter timestamps: {timestamps_str}
 Channel name: Fairway Frequencies
 
 The image attached is the exact frame used in this video — base the description on what you actually see in it, not on the prompt text.
@@ -83,7 +121,8 @@ Remember:
 - Description must hook viewers in the first 2 lines (they appear before "...more")
 - Description body must weave in searchable keyword phrases naturally (lofi, study music, golf, chill, focus music, etc.)
 - Include 25-30 tags
-- This is a 2-3 hour relaxation/study music video"""
+- Provide exactly {len(stamps)} chapter names (one per timestamp: {timestamps_str})
+- This is a {duration_hours}-hour relaxation/study music video"""
 
     local_logger.debug("  Calling Claude for metadata generation...")
 
@@ -133,38 +172,71 @@ Remember:
 
             metadata["is_made_for_kids"] = False
 
+            # Append chapter markers to description
+            chapter_names = metadata.pop("chapter_names", None)
+            if chapter_names and isinstance(chapter_names, list) and len(chapter_names) >= len(stamps):
+                metadata["description"] = _append_chapters(
+                    metadata.get("description", ""), stamps, chapter_names[:len(stamps)]
+                )
+                local_logger.info(f"  ✓ Chapters: {len(stamps)} markers added")
+            else:
+                # Fallback chapter names if Claude didn't return them
+                metadata["description"] = _append_chapters(
+                    metadata.get("description", ""), stamps,
+                    _fallback_chapter_names(len(stamps), mood)
+                )
+                local_logger.info(f"  ✓ Chapters: {len(stamps)} fallback markers added")
+
             local_logger.info(f"  ✓ Title: {metadata['title']}")
             return metadata
 
         except json.JSONDecodeError:
             # Claude returned non-JSON — build a fallback
             local_logger.warning("  ⚠️ Claude returned non-JSON metadata, using fallback")
-            return _build_fallback_metadata(scene_prompt, mood, time_of_day, season, has_character)
+            return _build_fallback_metadata(scene_prompt, mood, time_of_day, season, has_character, duration_hours)
 
         except Exception as e:
             local_logger.warning(f"  ⚠️ Metadata attempt {attempt+1} failed: {e}")
             if attempt < config.MAX_RETRIES - 1:
                 time.sleep(config.RETRY_BASE_DELAY * (2 ** attempt))
 
-    return _build_fallback_metadata(scene_prompt, mood, time_of_day, season, has_character)
+    return _build_fallback_metadata(scene_prompt, mood, time_of_day, season, has_character, duration_hours)
 
 
-def _build_fallback_metadata(scene_prompt, mood, time_of_day, season, has_character) -> dict:
+def _fallback_chapter_names(count: int, mood: str = "calm") -> list[str]:
+    """Generic chapter names when Claude doesn't return them."""
+    arcs = [
+        "Arrival at the Course",
+        "Settling Into the Round",
+        "Deep in the Fairway",
+        "The Back Nine",
+        "Golden Hour on the Green",
+        "Final Approach",
+        "The 19th Hole",
+    ]
+    return arcs[:count] if count <= len(arcs) else (arcs + [f"Continuing…"] * (count - len(arcs)))
+
+
+def _build_fallback_metadata(scene_prompt, mood, time_of_day, season, has_character,
+                              duration_hours: float = 2.0) -> dict:
     """Build fallback metadata without Claude if the API fails."""
     char_note = " • featuring our signature golfer" if has_character else ""
+    stamps = _chapter_timestamps(duration_hours)
+    base_desc = (
+        f"Step onto the course and let the music carry you. "
+        f"A {mood} {time_of_day} at a beautiful golf course{char_note}, "
+        f"animated in our signature anime/Ghibli art style.\n\n"
+        "✦ 2+ Hours of LoFi Golf Ambience\n"
+        "✦ No ads mid-video\n"
+        "✦ Perfect for studying, working, or relaxing\n\n"
+        "#lofi #golf #studymusic #chillmusic #relax\n\n"
+        "Fairway Frequencies — Where Golf Meets LoFi\n"
+        "Subscribe for new living painting videos every week. ⛳"
+    )
+    description = _append_chapters(base_desc, stamps, _fallback_chapter_names(len(stamps), mood))
     return {
         "title": f"Fairway Frequencies — {scene_prompt[:45]} | LoFi Golf ⛳",
-        "description": (
-            f"Step onto the course and let the music carry you. "
-            f"A {mood} {time_of_day} at a beautiful golf course{char_note}, "
-            f"animated in our signature anime/Ghibli art style.\n\n"
-            "✦ 2+ Hours of LoFi Golf Ambience\n"
-            "✦ No ads mid-video\n"
-            "✦ Perfect for studying, working, or relaxing\n\n"
-            "#lofi #golf #studymusic #chillmusic #relax\n\n"
-            "Fairway Frequencies — Where Golf Meets LoFi\n"
-            "Subscribe for new living painting videos every week. ⛳"
-        ),
+        "description": description,
         "tags": [
             "lofi", "golf", "lofi golf", "study music", "chill music",
             "relaxing music", "anime music", "ghibli music", "lo-fi hip hop",

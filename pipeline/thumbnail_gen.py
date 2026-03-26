@@ -29,7 +29,8 @@ logger = logging.getLogger("fairway.thumbnail_gen")
 
 THUMBNAIL_WIDTH  = 1280
 THUMBNAIL_HEIGHT = 720
-SATURATION_BOOST = 1.15
+SATURATION_BOOST = 1.25   # Bumped from 1.15 — thumbnails compete at ~270px wide in search
+RIGHT_BRIGHTNESS_BOOST = 1.12  # Lightly lift the right-side scenery so it pops against the dark left
 
 # Font paths — Arial Bold preferred, Impact as fallback
 _FONT_PATHS = [
@@ -201,40 +202,60 @@ def _add_text_overlay(img: Image.Image, headline: str, subtitle: str) -> Image.I
 
     w, h = img.size
 
-    # --- Dark gradient overlay on left portion ---
     img_array = np.array(img, dtype=np.float32)
 
     gradient_width = int(w * 0.58)   # Covers left 58% of image
+
+    # --- Dark gradient on left (text area) ---
     for x in range(gradient_width):
-        # Starts at 65% opacity at left edge, fades to 0 at gradient_width
-        opacity = 0.65 * (1.0 - (x / gradient_width) ** 0.6)
+        opacity = 0.68 * (1.0 - (x / gradient_width) ** 0.6)
         img_array[:, x, :] *= (1.0 - opacity)
+
+    # --- Subtle brightness lift on right (scenery area) ---
+    # Transitions smoothly from no boost at the gradient edge to full boost at right edge
+    right_start = int(w * 0.50)
+    for x in range(right_start, w):
+        t = (x - right_start) / (w - right_start)  # 0.0 → 1.0 across right side
+        boost = 1.0 + (RIGHT_BRIGHTNESS_BOOST - 1.0) * t
+        img_array[:, x, :] = np.clip(img_array[:, x, :] * boost, 0, 255)
 
     img = Image.fromarray(np.clip(img_array, 0, 255).astype(np.uint8))
 
     # --- Draw text ---
     draw = ImageDraw.Draw(img)
 
-    pad_x = 60    # Left padding
-    pad_y = 55    # Top padding
+    pad_x = 56
+    pad_y = 52
 
-    # Headline — large bold text
-    font_headline = _load_font(108)
-    _draw_text_with_shadow(draw, (pad_x, pad_y), headline, font_headline,
-                            fill=(255, 255, 255), shadow_offset=3, shadow_opacity=160)
+    # Headline — large bold text with word wrap so long phrases don't clip
+    font_headline = _load_font(100)
+    max_headline_width = int(w * 0.52)  # Don't let text bleed into the bright right side
+    headline_lines = _wrap_text(draw, headline, font_headline, max_headline_width)
+
+    _draw_text_with_shadow(draw, (pad_x, pad_y), "\n".join(headline_lines),
+                            font_headline, fill=(255, 255, 255),
+                            shadow_offset=4, shadow_opacity=200)
+
+    # Measure where the headline block ends
+    line_height = draw.textbbox((0, 0), "A", font=font_headline)[3]
+    headline_bottom = pad_y + line_height * len(headline_lines) + (10 * (len(headline_lines) - 1))
 
     # Subtitle — medium text below headline
-    font_subtitle = _load_font(52)
-    headline_bbox = draw.textbbox((pad_x, pad_y), headline, font=font_headline)
-    subtitle_y = headline_bbox[3] + 18
+    font_subtitle = _load_font(48)
+    subtitle_y = headline_bottom + 16
     _draw_text_with_shadow(draw, (pad_x, subtitle_y), subtitle, font_subtitle,
-                            fill=(220, 220, 220), shadow_offset=2, shadow_opacity=140)
+                            fill=(215, 225, 215), shadow_offset=3, shadow_opacity=180)
+
+    # Thin gold accent line between headline and subtitle
+    accent_y = headline_bottom + 8
+    draw.rectangle([(pad_x, accent_y), (pad_x + 160, accent_y + 3)],
+                   fill=(184, 148, 77))   # Muted gold — complements the green palette
 
     # Channel branding — small, bottom-left
-    font_brand = _load_font(34)
-    brand_y = h - 54
+    font_brand = _load_font(32)
+    brand_y = h - 50
     _draw_text_with_shadow(draw, (pad_x, brand_y), "Fairway Frequencies", font_brand,
-                            fill=(180, 210, 180), shadow_offset=2, shadow_opacity=120)
+                            fill=(170, 205, 170), shadow_offset=2, shadow_opacity=160)
 
     return img
 
@@ -245,11 +266,15 @@ def _draw_text_with_shadow(
     text: str,
     font: ImageFont.FreeTypeFont,
     fill: tuple,
-    shadow_offset: int = 3,
-    shadow_opacity: int = 150,
+    shadow_offset: int = 4,
+    shadow_opacity: int = 200,
 ):
     """
-    Draw text with a drop shadow for readability against any background.
+    Draw text with a multi-layer drop shadow for strong readability at small sizes.
+
+    WHY multi-layer? A single-pixel shadow looks thin when the thumbnail is
+    displayed at 270×152px in YouTube search. Drawing the shadow in 3 passes
+    at increasing offsets simulates a soft blur — it reads cleanly even tiny.
 
     Args:
         draw:           ImageDraw instance.
@@ -257,18 +282,54 @@ def _draw_text_with_shadow(
         text:           Text to draw.
         font:           Font to use.
         fill:           Text color as RGB tuple.
-        shadow_offset:  How many pixels to offset the shadow.
+        shadow_offset:  Base shadow offset in pixels.
         shadow_opacity: Shadow darkness (0=transparent, 255=black).
     """
     x, y = position
-    shadow_color = (0, 0, 0, shadow_opacity)
 
-    # Draw shadow slightly offset
-    draw.text((x + shadow_offset, y + shadow_offset), text,
-              font=font, fill=shadow_color)
+    # Three passes at increasing offsets — farthest first so closest renders on top
+    for dist, opacity in [
+        (shadow_offset + 2, shadow_opacity // 3),
+        (shadow_offset + 1, shadow_opacity // 2),
+        (shadow_offset,     shadow_opacity),
+    ]:
+        draw.text((x + dist, y + dist), text,
+                  font=font, fill=(0, 0, 0, opacity))
 
-    # Draw main text on top
+    # Main text on top
     draw.text((x, y), text, font=font, fill=fill)
+
+
+def _wrap_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont,
+               max_width: int) -> list:
+    """
+    Break text into lines that fit within max_width pixels.
+
+    Splits on spaces first. If a single word is wider than max_width it
+    stays on its own line (no character-level breaking needed for our
+    short keyword phrases).
+
+    Returns:
+        List of line strings.
+    """
+    words = text.split()
+    lines = []
+    current = ""
+
+    for word in words:
+        test = (current + " " + word).strip()
+        bbox = draw.textbbox((0, 0), test, font=font)
+        if bbox[2] <= max_width:
+            current = test
+        else:
+            if current:
+                lines.append(current)
+            current = word
+
+    if current:
+        lines.append(current)
+
+    return lines if lines else [text]
 
 
 def _resize_and_crop(img: Image.Image, target_width: int, target_height: int) -> Image.Image:

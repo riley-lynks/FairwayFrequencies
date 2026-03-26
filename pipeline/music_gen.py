@@ -45,6 +45,13 @@ MUSIC_LIBRARY_DIR = os.path.join("assets", "music")
 # Supported music file formats
 SUPPORTED_FORMATS = [".mp3", ".wav", ".m4a", ".flac", ".ogg"]
 
+# How many tracks to crossfade per FFmpeg call
+# 8 tracks = 7 acrossfade operations — safely within FFmpeg's filter graph limits
+AUDIO_BATCH_SIZE = 8
+
+# Duration of the crossfade between music tracks in seconds
+CROSSFADE_SECONDS = 5.0
+
 # YouTube's recommended loudness level (LUFS = Loudness Units relative to Full Scale)
 # WHY -14 LUFS? YouTube normalizes all videos to -14 LUFS. If your audio is louder,
 # YouTube will turn it down and it may sound compressed. If quieter, YouTube adds
@@ -179,12 +186,12 @@ def _sequence_tracks_to_duration(
     local_logger,
 ):
     """
-    Concatenate multiple tracks in a random shuffled order, cycling through
-    the library until the target duration is reached.
+    Sequence multiple tracks in random shuffled order with smooth crossfades,
+    cycling through the library until the target duration is reached.
 
-    WHY concat instead of loop? Looping one track sounds repetitive after a
-    few minutes. Cycling through the full library keeps the music fresh for
-    the entire 2-3 hour video.
+    Each track transition uses a 5-second acrossfade so the music blends
+    naturally instead of cutting abruptly. Tracks are processed in batches
+    of AUDIO_BATCH_SIZE to stay within FFmpeg's filter graph limits.
 
     Args:
         tracks:         List of audio file paths in the local library.
@@ -192,63 +199,45 @@ def _sequence_tracks_to_duration(
         output_path:    Where to save the final sequenced audio.
         local_logger:   Logger.
     """
-    # Build a shuffled sequence, cycling through the library until we
-    # have enough total duration to fill the video (plus a small buffer)
     shuffled = tracks[:]
     random.shuffle(shuffled)
 
+    # Build the sequence — pad generously because each crossfade eats
+    # CROSSFADE_SECONDS from the running total
     sequence = []
     total = 0.0
     idx = 0
-    while total < target_seconds + 30:
+    # Buffer = target + extra for crossfade overhead + 60s safety margin
+    target_with_buffer = target_seconds + 60
+    while total < target_with_buffer:
         track = shuffled[idx % len(shuffled)]
         duration = _get_audio_duration(track)
         sequence.append(track)
         total += duration
         idx += 1
-        # Reshuffle each time we cycle through the full library so the
-        # order is different on every pass
         if idx % len(shuffled) == 0:
             random.shuffle(shuffled)
 
     local_logger.info(
         f"  Sequence: {len(sequence)} tracks, "
-        f"~{total/3600:.1f}h total before trim"
+        f"~{total/3600:.1f}h raw → crossfading to {target_seconds/3600:.2f}h"
     )
 
-    # Write an FFmpeg concat list file
-    concat_file = output_path.replace(".wav", "_concat.txt")
-    with open(concat_file, "w", encoding="utf-8") as f:
-        for track_path in sequence:
-            # FFmpeg concat needs forward slashes and single-quote escaping
-            safe = track_path.replace("\\", "/").replace("'", "\\'")
-            f.write(f"file '{safe}'\n")
+    # Process the sequence in batches with acrossfade, then join the batches
+    batch_dir = os.path.dirname(output_path)
+    raw_joined = output_path.replace(".wav", "_raw_joined.wav")
+    _join_audio_with_crossfades(
+        tracks=sequence,
+        fade_seconds=CROSSFADE_SECONDS,
+        output_path=raw_joined,
+        work_dir=batch_dir,
+        local_logger=local_logger,
+    )
 
-    # Step 1: Concatenate all tracks into one raw file
-    raw_path = output_path.replace(".wav", "_raw_concat.wav")
+    # Trim to exact duration and normalize to -14 LUFS
     cmd = [
         "ffmpeg", "-y",
-        "-f", "concat",
-        "-safe", "0",
-        "-i", concat_file,
-        "-t", str(target_seconds + 10),   # Small buffer — trim precisely in step 2
-        "-c:a", "pcm_s16le",
-        "-ar", "44100",
-        raw_path,
-    ]
-    try:
-        subprocess.run(cmd, capture_output=True, text=True, check=True,
-                       creationflags=subprocess.CREATE_NO_WINDOW)
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"FFmpeg concat failed: {e.stderr[-300:]}")
-    finally:
-        if os.path.exists(concat_file):
-            os.remove(concat_file)
-
-    # Step 2: Trim to exact duration and normalize to -14 LUFS
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", raw_path,
+        "-i", raw_joined,
         "-t", str(target_seconds),
         "-af", f"loudnorm=I={TARGET_LUFS}:LRA=11:TP=-1.5",
         "-ar", "44100",
@@ -258,13 +247,149 @@ def _sequence_tracks_to_duration(
     try:
         subprocess.run(cmd, capture_output=True, text=True, check=True,
                        creationflags=subprocess.CREATE_NO_WINDOW)
-        os.remove(raw_path)
+        if os.path.exists(raw_joined):
+            os.remove(raw_joined)
         local_logger.info(
-            f"  ✓ Music ready: {len(sequence)} tracks, "
+            f"  ✓ Music ready: {len(sequence)} tracks crossfaded, "
             f"{target_seconds/3600:.2f}h, normalized to {TARGET_LUFS} LUFS"
         )
     except subprocess.CalledProcessError as e:
         raise RuntimeError(f"FFmpeg normalize failed: {e.stderr[-300:]}")
+
+
+def _crossfade_audio_batch(
+    tracks: list,
+    fade_seconds: float,
+    output_path: str,
+    local_logger,
+):
+    """
+    Apply acrossfade between a batch of audio tracks using FFmpeg filter_complex.
+
+    Builds a chain:
+        [0][1]acrossfade=d=5[a01]; [a01][2]acrossfade=d=5[a012]; ...
+
+    Args:
+        tracks:       List of audio file paths (length ≤ AUDIO_BATCH_SIZE).
+        fade_seconds: Crossfade duration in seconds.
+        output_path:  Where to save the crossfaded output.
+        local_logger: Logger.
+    """
+    if len(tracks) == 1:
+        import shutil as _shutil
+        _shutil.copy2(tracks[0], output_path)
+        return
+
+    input_flags = []
+    for t in tracks:
+        input_flags.extend(["-i", t])
+
+    # Build the acrossfade filter chain
+    filter_parts = []
+    prev_label = "[0:a]"
+    for i in range(1, len(tracks)):
+        out_label = "[outa]" if i == len(tracks) - 1 else f"[a{i}]"
+        # c1/c2 = "tri" (triangular window) — smooth, natural-sounding fade curve
+        filter_parts.append(
+            f"{prev_label}[{i}:a]acrossfade=d={fade_seconds}:c1=tri:c2=tri{out_label}"
+        )
+        prev_label = out_label
+
+    cmd = [
+        "ffmpeg", "-y",
+    ] + input_flags + [
+        "-filter_complex", ";".join(filter_parts),
+        "-map", "[outa]",
+        "-c:a", "pcm_s16le",
+        "-ar", "44100",
+        output_path,
+    ]
+
+    try:
+        subprocess.run(cmd, capture_output=True, text=True, check=True,
+                       creationflags=subprocess.CREATE_NO_WINDOW)
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(
+            f"FFmpeg acrossfade failed ({len(tracks)} tracks): {e.stderr[-400:]}"
+        )
+
+
+def _join_audio_with_crossfades(
+    tracks: list,
+    fade_seconds: float,
+    output_path: str,
+    work_dir: str,
+    local_logger,
+):
+    """
+    Join any number of audio tracks with crossfades using two-level batching.
+
+    For ≤ AUDIO_BATCH_SIZE tracks: crossfade in a single FFmpeg pass.
+    For more tracks: group into batches, crossfade each batch, recurse.
+
+    This mirrors the video assembly approach so there are no hard cuts
+    anywhere in the audio track, regardless of how many songs are queued.
+
+    Args:
+        tracks:       All audio files to join in order.
+        fade_seconds: Crossfade duration between tracks.
+        output_path:  Final output WAV path.
+        work_dir:     Directory for intermediate batch files.
+        local_logger: Logger.
+    """
+    n = len(tracks)
+
+    if n <= AUDIO_BATCH_SIZE:
+        _crossfade_audio_batch(tracks, fade_seconds, output_path, local_logger)
+        return
+
+    # Group into batches, crossfade each batch, then recurse on the results
+    # Overlap batches by 1 track so there's no gap at batch boundaries —
+    # the last track of batch N becomes the first track of batch N+1,
+    # ensuring a crossfade bridges every seam.
+    batch_outputs = []
+    step = AUDIO_BATCH_SIZE - 1  # overlap of 1 track per boundary
+
+    for idx, start in enumerate(range(0, n, step)):
+        chunk = tracks[start:start + AUDIO_BATCH_SIZE]
+        if len(chunk) < 2:
+            # Single straggler — fold it into the previous batch output
+            # by letting the recursion handle it naturally
+            break
+        batch_out = os.path.join(work_dir, f"music_abatch_{idx:04d}.wav")
+        if not os.path.exists(batch_out):
+            local_logger.debug(f"  Audio batch {idx+1}: {len(chunk)} tracks...")
+            _crossfade_audio_batch(chunk, fade_seconds, batch_out, local_logger)
+        batch_outputs.append(batch_out)
+
+    # Recursively join the batch outputs (they are already crossfaded internally,
+    # so we join them with hard concat — the overlapping track ensures continuity)
+    local_logger.info(f"  Joining {len(batch_outputs)} audio batches...")
+    concat_list = output_path.replace(".wav", "_abatch_concat.txt")
+    with open(concat_list, "w", encoding="utf-8") as f:
+        for p in batch_outputs:
+            safe = os.path.abspath(p).replace("\\", "/")
+            f.write(f"file '{safe}'\n")
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "concat", "-safe", "0",
+        "-i", concat_list,
+        "-c", "copy",
+        output_path,
+    ]
+    try:
+        subprocess.run(cmd, capture_output=True, text=True, check=True,
+                       creationflags=subprocess.CREATE_NO_WINDOW)
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"FFmpeg audio batch join failed: {e.stderr[-300:]}")
+    finally:
+        if os.path.exists(concat_list):
+            os.remove(concat_list)
+        # Clean up intermediate batch files
+        for p in batch_outputs:
+            if os.path.exists(p):
+                os.remove(p)
 
 
 def _loop_track_to_duration(

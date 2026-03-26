@@ -15,30 +15,19 @@ const { useState, useCallback, useRef, useEffect } = React;
 // DATA — Scene library, style constants, character options
 // =============================================================================
 
-// All 20 scenes match the scene_library.json used by the Python pipeline.
-// The scene `id` values are passed to `python fairway.py --scene <id>`
-const SCENE_LIBRARY = [
-  { id: "misty_dawn_links",     name: "Misty Dawn Links",       desc: "Scottish links course, ocean, gentle fog",           mood: "calm"       },
-  { id: "golden_hour_masters",  name: "Golden Hour Masters",    desc: "Augusta-style, pink azaleas, golden light",          mood: "warm"       },
-  { id: "rainy_afternoon",      name: "Rainy Afternoon",        desc: "Lush parkland, gentle rain, cozy overcast",          mood: "cozy"       },
-  { id: "desert_sunrise",       name: "Desert Sunrise",         desc: "Desert course, cacti silhouettes, pink sky",         mood: "dramatic"   },
-  { id: "autumn_new_england",   name: "Autumn New England",     desc: "Peak fall foliage, red maples, stone bridge",        mood: "nostalgic"  },
-  { id: "tropical_paradise",    name: "Tropical Paradise",      desc: "Island course, palm trees, turquoise ocean",         mood: "bright"     },
-  { id: "moonlit_fairway",      name: "Moonlit Fairway",        desc: "Starry sky, blue mist, glowing moonlight",           mood: "dreamy"     },
-  { id: "winter_frost",         name: "Winter Frost",           desc: "Frost-covered, bare trees, frozen pond",             mood: "serene"     },
-  { id: "cherry_blossom_japan", name: "Cherry Blossom Japan",   desc: "Cherry trees, floating petals, koi pond",            mood: "peaceful"   },
-  { id: "coastal_cliffs_sunset",name: "Coastal Cliffs Sunset",  desc: "Clifftop, Pacific ocean, dramatic clouds",           mood: "epic"       },
-  { id: "english_countryside",  name: "English Countryside",    desc: "Rolling hills, stone walls, sheep in distance",      mood: "charming"   },
-  { id: "mountain_alpine",      name: "Mountain Alpine",        desc: "Snow-capped peaks, wildflower meadows",              mood: "majestic"   },
-  { id: "foggy_practice_range", name: "Foggy Practice Range",   desc: "Driving range at dawn, flag pins in mist",           mood: "meditative" },
-  { id: "storm_approaching",    name: "Storm Approaching",      desc: "Dark clouds, dramatic pre-storm golden light",       mood: "moody"      },
-  { id: "lakeside_reflection",  name: "Lakeside Reflection",    desc: "Mirror-still lake, perfect reflection, sunrise",     mood: "tranquil"   },
-  { id: "vintage_clubhouse",    name: "Vintage Clubhouse",      desc: "Veranda view, warm afternoon, flowers",              mood: "retro"      },
-  { id: "snowy_holiday",        name: "Snowy Holiday",          desc: "Light snow, warm clubhouse lights, peaceful",        mood: "festive"    },
-  { id: "summer_afternoon",     name: "Summer Afternoon",       desc: "Bright day, puffy clouds, sprinkler rainbows",       mood: "cheerful"   },
-  { id: "hawaiian_volcanic",    name: "Hawaiian Volcanic",      desc: "Volcanic rock, tropical flowers, ocean breeze",      mood: "exotic"     },
-  { id: "morning_dew_closeup",  name: "Morning Dew Closeup",   desc: "Intimate green view, heavy dew, spider web",         mood: "intimate"   },
+// Monthly art style rotation — mirrors ART_STYLES in pipeline/orchestrator.py
+// (month - 1) % 4 → 0=Ghibli, 1=Cinematic, 2=Watercolour, 3=Oil Painting
+const ART_STYLES = [
+  { name: "Studio Ghibli Anime",      short: "Ghibli",      description: "Hand-painted anime aesthetic. Rich saturated colors, soft natural light, dreamlike atmosphere.", accent: "#2D6A4F" },
+  { name: "Cinematic Photorealistic", short: "Cinematic",   description: "Film-quality photography look. Dramatic golden-hour lighting, shallow depth of field.",          accent: "#744210" },
+  { name: "Soft Watercolour",         short: "Watercolour", description: "Delicate watercolour illustration. Soft washes, paper texture, impressionistic.",                accent: "#2C5282" },
+  { name: "Rich Oil Painting",        short: "Oil Painting",description: "Classical oil painting. Impasto texture, Old Masters drama, rich deep colors.",                  accent: "#702459" },
 ];
+
+function getCurrentArtStyle() {
+  const month = new Date().getMonth() + 1; // 1-12
+  return ART_STYLES[(month - 1) % 4];
+}
 
 // Short style suffix appended to MJ prompts — matches STYLE_SUFFIX in config.py
 const STYLE_SUFFIX = `in the style of a detailed anime background painting, Studio Ghibli inspired, vibrant saturated colors, clean linework, lush detailed landscape, warm natural lighting, soft puffy clouds, visible brushstroke texture, concept art quality, 16:9 widescreen composition, no text, no UI elements`;
@@ -131,14 +120,12 @@ function FairwayControlPanel() {
   // ---------------------------------------------------------------------------
   const [tab, setTab] = useState("create");
   const [prompt, setPrompt] = useState("");
-  const [selectedScene, setSelectedScene] = useState(null);
+  const [sceneGenerating, setSceneGenerating] = useState(false);
   const [includeCharacter, setIncludeCharacter] = useState("random");
   const [includeAmbience, setIncludeAmbience] = useState(true);
   const [duration, setDuration] = useState(2);
   const [stylize, setStylize] = useState(750);
   const [generatedPrompt, setGeneratedPrompt] = useState("");
-  const [uploadedImages, setUploadedImages] = useState([]);
-  const [selectedImage, setSelectedImage] = useState(null); // filename of the chosen base image
   const [pipelineLog, setPipelineLog] = useState([]);
   const [pipelineRunning, setPipelineRunning] = useState(false);
   const [pipelineStatus, setPipelineStatus] = useState(null); // "running" | "complete" | "error"
@@ -149,50 +136,130 @@ function FairwayControlPanel() {
   const [klingNegativePrompt, setKlingNegativePrompt] = useState(""); // negative prompt (same for all clips)
   const [copiedNegative, setCopiedNegative] = useState(false);        // for the negative prompt copy btn
   const [promptSource, setPromptSource] = useState(null);             // "claude" | "local"
-  const [uploadError, setUploadError] = useState(null);
   const [klingClipSets, setKlingClipSets] = useState([]);       // available clip sets
   const [selectedClipSet, setSelectedClipSet] = useState(null); // chosen folder name ("" = root)
   // Which AI tool the user will paste the image prompt into
   // "chatgpt" = DALL·E 3 via ChatGPT | "kling" = Kling Image Gen | "midjourney" = Midjourney
   const [imageGenTool, setImageGenTool] = useState("chatgpt");
 
+  // Analytics state
+  const [analyticsData, setAnalyticsData] = useState(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [analyticsError, setAnalyticsError] = useState(null);
+
+  // Scene history — { scene_id: days_ago }
+  const [usedSceneIds, setUsedSceneIds] = useState({});
+
+  // ---------------------------------------------------------------------------
+  // getRecommendations — analyze analytics data and return actionable cards
+  // ---------------------------------------------------------------------------
+  // Each card: { icon, title, body, action, accent }
+  // accent: "green" | "yellow" | "red" | "blue"
+  function getRecommendations(data, sceneHistory = {}) {
+    const recs = [];
+    const videos = data.videos || [];
+    const channel = data.channel || {};
+
+    // ── 1. Top performer by avg view % ─────────────────────────────────────
+    if (videos.length > 0) {
+      const best = videos.reduce((a, b) => a.avg_view_pct >= b.avg_view_pct ? a : b);
+      const shortTitle = best.title.length > 40 ? best.title.slice(0, 38) + "…" : best.title;
+      if (best.avg_view_pct >= 30) {
+        recs.push({
+          icon: "★",
+          title: "Top Performer — Make More Like This",
+          body: `"${shortTitle}" has ${best.avg_view_pct}% avg view retention — your strongest video. Viewers are staying engaged. Replicate the scene mood, thumbnail style, and music energy for your next upload.`,
+          action: `Suggested next scene: same vibe as ${shortTitle.split("—")[1]?.trim() || "this one"}`,
+          accent: "green",
+        });
+      } else if (best.avg_view_pct > 0) {
+        recs.push({
+          icon: "↑",
+          title: "Best Retention So Far",
+          body: `"${shortTitle}" leads with ${best.avg_view_pct}% avg view — but there's room to grow. LoFi channels typically hit 30–50% once the algorithm finds the right audience.`,
+          action: "Focus on consistency — more uploads help the algorithm learn your audience",
+          accent: "yellow",
+        });
+      }
+    }
+
+    // ── 2. Retention health check ───────────────────────────────────────────
+    if (videos.length > 1) {
+      const avgRetention = videos.reduce((sum, v) => sum + v.avg_view_pct, 0) / videos.length;
+      if (avgRetention < 20) {
+        recs.push({
+          icon: "⚠",
+          title: "Low Retention — Thumbnail/Title Mismatch Likely",
+          body: `Average retention across your videos is ${avgRetention.toFixed(1)}%. When viewers click but leave quickly it usually means the thumbnail or title promises something different from what they get. Consider more literal thumbnail text (e.g. "2 HOUR LOFI" instead of a mood phrase).`,
+          action: "Try A/B testing: one keyword thumbnail vs one mood thumbnail on the next upload",
+          accent: "red",
+        });
+      } else if (avgRetention >= 40) {
+        recs.push({
+          icon: "✓",
+          title: "Strong Retention — Push for Volume",
+          body: `${avgRetention.toFixed(1)}% avg retention is excellent for long-form LoFi. YouTube's algorithm will reward consistency now. The main lever is publishing frequency.`,
+          action: "Aim for 1 upload per week to accelerate algorithm indexing",
+          accent: "green",
+        });
+      }
+    }
+
+    // ── 3. Watch hours milestone ─────────────────────────────────────────────
+    if (channel.watch_hours !== undefined) {
+      const hrs = channel.watch_hours;
+      // YouTube monetization requires 4,000 watch hours in 12 months
+      if (hrs < 100) {
+        recs.push({
+          icon: "⏱",
+          title: "Building Watch Hours",
+          body: `You have ${hrs} watch hours this month. Long-form LoFi (2–3 hrs) is one of the best formats for accumulating watch hours quickly — each video that gets traction multiplies your totals. YouTube monetization unlocks at 4,000 hours/year.`,
+          action: "Prioritize 2–3 hour videos over 1 hour while building up",
+          accent: "blue",
+        });
+      } else if (hrs >= 100 && hrs < 500) {
+        recs.push({
+          icon: "⏱",
+          title: "Watch Hours Growing",
+          body: `${hrs} watch hours this month — solid progress. At this pace, consistent uploads will get you to the 4,000-hour/year monetization threshold within a few months.`,
+          action: "Keep the 2–3 hour format. Each viral video compounds your total fast.",
+          accent: "blue",
+        });
+      }
+    }
+
+    // ── 4. Subscriber momentum ───────────────────────────────────────────────
+    if (channel.subscribers_gained > 0) {
+      const ratio = channel.views > 0
+        ? ((channel.subscribers_gained / channel.views) * 100).toFixed(2)
+        : "0";
+      recs.push({
+        icon: "↗",
+        title: "Subscriber Conversion",
+        body: `You gained ${channel.subscribers_gained} subscribers from ${channel.views.toLocaleString()} views — a ${ratio}% conversion rate. LoFi channels typically convert at 0.5–2%. A channel branding card in the first 30 seconds of each video can lift this.`,
+        action: "Add an end screen with Subscribe prompt via YouTube Studio",
+        accent: channel.subscribers_gained >= 5 ? "green" : "yellow",
+      });
+    }
+
+    // ── 5. Next video prompt ─────────────────────────────────────────────────
+    const artStyle = getCurrentArtStyle();
+    const season = getCurrentSeasonScene().label;
+    recs.push({
+      icon: "▶",
+      title: `Next Video: ${artStyle.name} + ${season}`,
+      body: `This month's art style is ${artStyle.name}. Click "✦ Generate Scene" on the Create tab — Claude will write a fresh golf scene that matches the ${artStyle.short} aesthetic and the current ${season} season.`,
+      action: `Go to Create & Prompt → click ✦ Generate Scene → run the pipeline`,
+      accent: "blue",
+    });
+
+    return recs;
+  }
+
   // Refs
-  const fileInputRef = useRef(null);
   const pollingRef = useRef(null);   // stores the setInterval ID for pipeline polling
   const logEndRef = useRef(null);    // for auto-scrolling the log to the bottom
 
-  // ---------------------------------------------------------------------------
-  // refreshImages — fetch the authoritative image list from the server
-  // ---------------------------------------------------------------------------
-  // WHY a shared function instead of inline fetch?
-  //   We need to load images in two places: on mount (to show existing files)
-  //   and after every upload (to reflect what's actually on disk).
-  //   Using one function both places means the UI always shows exactly what
-  //   the server has — no duplicates, no stale entries, no guessing.
-  const refreshImages = useCallback(() => {
-    fetch('/api/images')
-      .then(r => r.json())
-      .then(data => {
-        const images = (data.images || []).map(img => ({
-          name: img.filename,
-          src: `/api/images/preview/${encodeURIComponent(img.filename)}`,
-          date: img.date,
-          size: img.size_mb + " MB",
-        }));
-        setUploadedImages(images);
-
-        // If the currently selected image was deleted from disk, clear the selection
-        setSelectedImage(prev =>
-          prev && images.some(img => img.name === prev) ? prev : null
-        );
-      })
-      .catch(() => {
-        // Server not running yet — fine, images stay empty
-      });
-  }, []);
-
-  // Load images on mount
-  useEffect(() => { refreshImages(); }, [refreshImages]);
 
   // ---------------------------------------------------------------------------
   // refreshClipSets — fetch the list of named clip set folders from the server
@@ -216,6 +283,42 @@ function FairwayControlPanel() {
   // Load clip sets on mount and whenever the pipeline tab is opened
   useEffect(() => { refreshClipSets(); }, [refreshClipSets]);
   useEffect(() => { if (tab === "pipeline") refreshClipSets(); }, [tab, refreshClipSets]);
+
+  // ---------------------------------------------------------------------------
+  // fetchAnalytics — call /api/analytics and populate the analytics tab
+  // ---------------------------------------------------------------------------
+  const fetchAnalytics = useCallback(() => {
+    setAnalyticsLoading(true);
+    setAnalyticsError(null);
+
+    // Fetch analytics + scene history in parallel
+    Promise.all([
+      fetch('/api/analytics').then(r => r.json()),
+      fetch('/api/scene-history').then(r => r.json()).catch(() => ({ used_ids: {} })),
+    ]).then(([analyticsJson, historyJson]) => {
+      if (analyticsJson.error) {
+        setAnalyticsError(analyticsJson.error);
+      } else {
+        setAnalyticsData(analyticsJson);
+      }
+      setUsedSceneIds(historyJson.used_ids || {});
+      setAnalyticsLoading(false);
+    }).catch(err => {
+      setAnalyticsError(`Could not reach server: ${err.message}`);
+      setAnalyticsLoading(false);
+    });
+  }, []);
+
+  // Load scene history on mount (so scene badges show immediately on Create tab)
+  useEffect(() => {
+    fetch('/api/scene-history')
+      .then(r => r.json())
+      .then(data => setUsedSceneIds(data.used_ids || {}))
+      .catch(() => {});
+  }, []);
+
+  // Load full analytics when the tab is opened
+  useEffect(() => { if (tab === "analytics" && !analyticsData) fetchAnalytics(); }, [tab]);
 
   // Auto-scroll the pipeline log to the latest entry whenever a new line arrives
   useEffect(() => {
@@ -269,9 +372,7 @@ function FairwayControlPanel() {
   }, []);
 
   const generateMJPrompt = useCallback(async (overrideDesc = null) => {
-    const sceneDesc = overrideDesc || prompt || (selectedScene
-      ? SCENE_LIBRARY.find(s => s.id === selectedScene)?.desc
-      : "");
+    const sceneDesc = overrideDesc || prompt;
     if (!sceneDesc) return;
 
     setPromptsLoading(true);
@@ -337,7 +438,7 @@ function FairwayControlPanel() {
     setKlingPrompts(klingPromptsArr);
     setPromptSource(source);
     setPromptsLoading(false);
-  }, [prompt, selectedScene, includeCharacter, stylize, imageGenTool, formatImagePrompt]);
+  }, [prompt, includeCharacter, stylize, imageGenTool, formatImagePrompt]);
 
   const copyPrompt = useCallback(() => {
     navigator.clipboard.writeText(generatedPrompt);
@@ -366,80 +467,24 @@ function FairwayControlPanel() {
   }, [klingNegativePrompt]);
 
   // ---------------------------------------------------------------------------
-  // QUICK SCENE PICKERS — Random Scene + Today's Scene (season/holiday aware)
+  // GENERATE SCENE — call /api/generate-scene (Claude picks a fresh scene
+  // based on the current month's art style + season)
   // ---------------------------------------------------------------------------
-  // Both buttons set the scene state then immediately generate prompts so the
-  // user gets results in one click instead of two.
-  const handleRandomScene = useCallback(async () => {
-    const pick = SCENE_LIBRARY[Math.floor(Math.random() * SCENE_LIBRARY.length)];
-    setSelectedScene(pick.id);
-    setPrompt("");
-    await generateMJPrompt(pick.desc);
-  }, [generateMJPrompt]);
-
-  const handleSeasonScene = useCallback(async () => {
-    const { desc } = getCurrentSeasonScene();
-    setPrompt(desc);
-    setSelectedScene(null);
-    await generateMJPrompt(desc);
-  }, [generateMJPrompt]);
-
-  // Pre-compute the season/holiday label for the button text (no date logic at render time)
-  const todaySceneLabel = getCurrentSeasonScene().label;
-
-  // ---------------------------------------------------------------------------
-  // UPLOAD IMAGE — POST to server, which saves to assets/midjourney_images/
-  // ---------------------------------------------------------------------------
-  // WHY real upload instead of base64-in-state:
-  //   The pipeline Python script reads images from disk. We need the file to
-  //   actually be saved on the server before we can run the pipeline.
-  const handleImageUpload = useCallback(async (e) => {
-    const files = Array.from(e.target.files);
-    setUploadError(null);
-
-    for (const file of files) {
-      const formData = new FormData();
-      formData.append('image', file);
-
-      try {
-        const res = await fetch('/api/upload-image', {
-          method: 'POST',
-          body: formData,
-        });
-        const data = await res.json();
-        if (!data.success) {
-          setUploadError(data.error || 'Upload failed');
-        }
-      } catch (err) {
-        setUploadError(`Upload failed: ${err.message}. Is the server running?`);
-      }
-    }
-
-    // Refetch the full list from the server instead of manually appending.
-    // WHY: The server is the source of truth. This prevents duplicates when
-    // files are added directly to the folder AND via the UI drop zone.
-    refreshImages();
-    e.target.value = '';
-  }, [refreshImages]);
-
-  // ---------------------------------------------------------------------------
-  // REMOVE IMAGE — DELETE from server disk + remove from UI state
-  // ---------------------------------------------------------------------------
-  const removeImage = useCallback(async (idx) => {
-    const img = uploadedImages[idx];
-
+  const handleGenerateScene = useCallback(async () => {
+    setSceneGenerating(true);
     try {
-      await fetch(`/api/images/${encodeURIComponent(img.name)}`, {
-        method: 'DELETE',
-      });
+      const res = await fetch('/api/generate-scene', { method: 'POST' });
+      const data = await res.json();
+      if (data.scene) {
+        setPrompt(data.scene);
+        await generateMJPrompt(data.scene);
+      }
     } catch (err) {
-      console.error('Delete failed:', err);
+      console.error('Scene generation failed:', err);
     }
+    setSceneGenerating(false);
+  }, [generateMJPrompt]);
 
-    // Refetch from server so UI exactly matches disk
-    // (refreshImages also clears selectedImage if that file is now gone)
-    refreshImages();
-  }, [uploadedImages, refreshImages]);
 
   // ---------------------------------------------------------------------------
   // RUN PIPELINE — POST to server, then poll for real-time log updates
@@ -451,7 +496,7 @@ function FairwayControlPanel() {
   //      accumulated log lines + current status ("running" | "complete" | "error")
   //   3. When status is "complete" or "error", stop polling
   const runPipeline = useCallback(async () => {
-    if (uploadedImages.length === 0 || pipelineRunning) return;
+    if (pipelineRunning) return;
 
     setPipelineRunning(true);
     setPipelineStatus("running");
@@ -462,8 +507,7 @@ function FairwayControlPanel() {
       duration: duration,
       no_ambience: !includeAmbience,
       character: includeCharacter,
-      scene: selectedScene || prompt,
-      image_filename: selectedImage,     // tells the pipeline exactly which image to use
+      scene: prompt,
       clips_folder: selectedClipSet,     // which kling_clips subfolder to use
     };
 
@@ -529,17 +573,15 @@ function FairwayControlPanel() {
       }
     }, 2000);
 
-  }, [uploadedImages, pipelineRunning, selectedScene, prompt, duration, includeAmbience, includeCharacter]);
+  }, [pipelineRunning, prompt, duration, includeAmbience, includeCharacter, selectedClipSet]);
 
   // ---------------------------------------------------------------------------
   // BUILD COMMAND PREVIEW (shown in the dark box on the Run tab)
   // ---------------------------------------------------------------------------
   const commandPreview = (() => {
     const parts = ['python -X utf8 fairway.py'];
-    if (selectedScene) parts.push(`--scene ${selectedScene}`);
-    else if (prompt) parts.push(`"${prompt}"`);
+    if (prompt) parts.push(`"${prompt}"`);
     parts.push(`--duration ${duration}`);
-    if (selectedImage) parts.push(`--image "${selectedImage}"`);
     if (selectedClipSet != null) parts.push(`--clips-folder "${selectedClipSet || '(root)'}"`);
     if (!includeAmbience) parts.push('--no-ambience');
     if (includeCharacter !== 'random') parts.push(`--character ${includeCharacter}`);
@@ -568,9 +610,9 @@ function FairwayControlPanel() {
       {/* ------------------------------------------------------------------ */}
       <div style={{ display: "flex", borderBottom: "1px solid var(--color-border-tertiary)", marginTop: 20 }}>
         {[
-          { id: "create",   label: "Create & Prompt" },
-          { id: "upload",   label: "Upload Images" },
-          { id: "pipeline", label: "Run Pipeline" },
+          { id: "create",    label: "Create & Prompt" },
+          { id: "pipeline",  label: "Run Pipeline" },
+          { id: "analytics", label: "Analytics" },
         ].map(t => (
           <button key={t.id} onClick={() => setTab(t.id)} style={{
             flex: 1, padding: "12px 0", fontSize: 14, fontWeight: tab === t.id ? 600 : 400,
@@ -588,81 +630,64 @@ function FairwayControlPanel() {
       {tab === "create" && (
         <div style={{ padding: "24px 0" }}>
 
-          {/* ── Quick Start row ─────────────────────────────────────────── */}
-          <div style={{ display: "flex", gap: 10, marginBottom: 24 }}>
-            <button
-              onClick={handleRandomScene}
-              disabled={promptsLoading}
-              style={{
-                flex: 1, padding: "11px 0", fontSize: 13, fontWeight: 600,
-                borderRadius: 8, border: "1px solid #2D6A4F", cursor: promptsLoading ? "not-allowed" : "pointer",
-                background: "var(--color-background-secondary)", color: "#2D6A4F",
-                fontFamily: "inherit", transition: "all 0.2s", letterSpacing: 0.2,
-              }}
-            >
-              🎲 Random Scene
-            </button>
-            <button
-              onClick={handleSeasonScene}
-              disabled={promptsLoading}
-              style={{
-                flex: 1, padding: "11px 0", fontSize: 13, fontWeight: 600,
-                borderRadius: 8, border: "1px solid #B08D57", cursor: promptsLoading ? "not-allowed" : "pointer",
-                background: "var(--color-background-secondary)", color: "#B08D57",
-                fontFamily: "inherit", transition: "all 0.2s", letterSpacing: 0.2,
-              }}
-            >
-              🗓️ Today's Scene — {todaySceneLabel}
-            </button>
-          </div>
+          {/* ── Art Style Banner ─────────────────────────────────────────── */}
+          {(() => {
+            const style = getCurrentArtStyle();
+            return (
+              <div style={{
+                borderRadius: 10, padding: "16px 20px", marginBottom: 20,
+                border: `1px solid ${style.accent}40`,
+                background: `${style.accent}12`,
+              }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+                  <div>
+                    <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1.5, color: style.accent, marginBottom: 4 }}>
+                      THIS MONTH'S ART STYLE
+                    </div>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: "var(--color-text-primary)" }}>{style.name}</div>
+                    <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2 }}>{style.description}</div>
+                  </div>
+                  <div style={{
+                    fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 20,
+                    background: style.accent, color: "#fff", letterSpacing: 0.3,
+                  }}>
+                    {style.short}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
-          {/* OR divider between quick picks and manual entry */}
-          <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20 }}>
-            <div style={{ flex: 1, height: 1, background: "var(--color-border-tertiary)" }} />
-            <span style={{ fontSize: 11, color: "var(--color-text-tertiary)", fontWeight: 500 }}>OR DESCRIBE YOUR OWN SCENE</span>
-            <div style={{ flex: 1, height: 1, background: "var(--color-border-tertiary)" }} />
-          </div>
-
-          {/* Custom scene description */}
+          {/* ── Generate Scene + manual textarea ──────────────────────── */}
           <div style={{ marginBottom: 24 }}>
-            <label style={{ fontSize: 13, fontWeight: 600, color: "#2D6A4F", letterSpacing: 0.5 }}>SCENE DESCRIPTION</label>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+              <label style={{ fontSize: 13, fontWeight: 600, color: "#2D6A4F", letterSpacing: 0.5 }}>SCENE DESCRIPTION</label>
+              <button
+                onClick={handleGenerateScene}
+                disabled={sceneGenerating || promptsLoading}
+                style={{
+                  padding: "7px 16px", fontSize: 13, fontWeight: 600, borderRadius: 8,
+                  border: "1px solid #2D6A4F", cursor: (sceneGenerating || promptsLoading) ? "not-allowed" : "pointer",
+                  background: sceneGenerating ? "var(--color-background-secondary)" : "#2D6A4F",
+                  color: sceneGenerating ? "#2D6A4F" : "#fff",
+                  fontFamily: "inherit", transition: "all 0.2s", letterSpacing: 0.2,
+                  opacity: (sceneGenerating || promptsLoading) ? 0.7 : 1,
+                }}
+              >
+                {sceneGenerating ? "✦ Generating…" : "✦ Generate Scene"}
+              </button>
+            </div>
             <textarea
               value={prompt}
-              onChange={e => { setPrompt(e.target.value); setSelectedScene(null); }}
-              placeholder="Describe your golf course scene... e.g. 'Misty dawn, links-style course near coastal cliffs, soft rain, autumn colors'"
+              onChange={e => setPrompt(e.target.value)}
+              placeholder="Click ✦ Generate Scene to have Claude write a fresh scene for this month's art style, or type your own description…"
               style={{
-                width: "100%", marginTop: 8, padding: 14, fontSize: 14, borderRadius: 8,
+                width: "100%", padding: 14, fontSize: 14, borderRadius: 8,
                 border: "1px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)",
-                color: "var(--color-text-primary)", resize: "vertical", minHeight: 80,
+                color: "var(--color-text-primary)", resize: "vertical", minHeight: 90,
                 fontFamily: "inherit", outline: "none", boxSizing: "border-box"
               }}
             />
-          </div>
-
-          {/* OR divider */}
-          <div style={{ display: "flex", alignItems: "center", gap: 16, margin: "20px 0" }}>
-            <div style={{ flex: 1, height: 1, background: "var(--color-border-tertiary)" }} />
-            <span style={{ fontSize: 12, color: "var(--color-text-tertiary)", fontWeight: 500 }}>OR PICK A SCENE</span>
-            <div style={{ flex: 1, height: 1, background: "var(--color-border-tertiary)" }} />
-          </div>
-
-          {/* Scene grid */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 10, marginBottom: 24 }}>
-            {SCENE_LIBRARY.map(s => (
-              <button key={s.id} onClick={() => { setSelectedScene(s.id); setPrompt(""); }}
-                style={{
-                  padding: "12px 14px", borderRadius: 8, cursor: "pointer", textAlign: "left",
-                  border: selectedScene === s.id ? "2px solid #2D6A4F" : "1px solid var(--color-border-tertiary)",
-                  background: selectedScene === s.id ? "#D8F3DC" : "var(--color-background-secondary)",
-                  transition: "all 0.15s", fontFamily: "inherit"
-                }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: MOOD_COLORS[s.mood] || "#999", flexShrink: 0 }} />
-                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--color-text-primary)" }}>{s.name}</div>
-                </div>
-                <div style={{ fontSize: 11, color: "var(--color-text-secondary)", lineHeight: 1.4 }}>{s.desc}</div>
-              </button>
-            ))}
           </div>
 
           {/* ── Image generation tool selector ───────────────────────── */}
@@ -749,15 +774,15 @@ function FairwayControlPanel() {
           </div>
 
           {/* Generate prompts button — calls server to get MJ + Kling prompts */}
-          <button onClick={generateMJPrompt} disabled={(!prompt && !selectedScene) || promptsLoading}
+          <button onClick={generateMJPrompt} disabled={!prompt || promptsLoading}
             style={{
               width: "100%", padding: "14px 0", fontSize: 15, fontWeight: 600, borderRadius: 8,
               border: "none", fontFamily: "inherit", letterSpacing: 0.3, transition: "all 0.2s",
-              cursor: ((!prompt && !selectedScene) || promptsLoading) ? "not-allowed" : "pointer",
-              background: ((!prompt && !selectedScene) || promptsLoading)
+              cursor: (!prompt || promptsLoading) ? "not-allowed" : "pointer",
+              background: (!prompt || promptsLoading)
                 ? (promptsLoading ? "#B08D57" : "var(--color-border-tertiary)")
                 : "#2D6A4F",
-              color: (!prompt && !selectedScene) ? "var(--color-text-tertiary)" : "#fff",
+              color: !prompt ? "var(--color-text-tertiary)" : "#fff",
             }}>
             {promptsLoading ? "Generating Prompts…" : "Generate All Prompts"}
           </button>
@@ -898,132 +923,6 @@ function FairwayControlPanel() {
         </div>
       )}
 
-      {/* ================================================================== */}
-      {/* TAB: UPLOAD IMAGES                                                  */}
-      {/* ================================================================== */}
-      {tab === "upload" && (
-        <div style={{ padding: "24px 0" }}>
-          <div style={{ fontSize: 14, color: "var(--color-text-secondary)", marginBottom: 20, lineHeight: 1.6 }}>
-            Upload your Midjourney or ChatGPT generated images here. Pick your single best image —
-            this becomes the "living painting" base for the entire video. Images are saved to{" "}
-            <code style={{ fontSize: 12, background: "var(--color-accent-light)", padding: "2px 6px", borderRadius: 4 }}>
-              assets/midjourney_images/
-            </code>
-            {" "}on the server.
-          </div>
-
-          {/* Error message */}
-          {uploadError && (
-            <div style={{
-              marginBottom: 16, padding: "12px 16px", borderRadius: 8,
-              background: "#FFF5F5", border: "1px solid #FC8181", color: "#9B2C2C", fontSize: 13
-            }}>
-              {uploadError}
-            </div>
-          )}
-
-          {/* Drop zone — click to open file picker */}
-          <div
-            onClick={() => fileInputRef.current?.click()}
-            onDragOver={e => e.preventDefault()}
-            onDrop={e => {
-              e.preventDefault();
-              // Simulate a change event with the dropped files
-              handleImageUpload({ target: { files: e.dataTransfer.files, value: '' } });
-            }}
-            style={{
-              border: "2px dashed var(--color-border-secondary)", borderRadius: 12, padding: "48px 24px",
-              textAlign: "center", cursor: "pointer", transition: "all 0.2s",
-              background: "var(--color-background-secondary)"
-            }}
-          >
-            <div style={{ fontSize: 36, marginBottom: 8 }}>&#x1F3CC;</div>
-            <div style={{ fontSize: 15, fontWeight: 600, color: "var(--color-text-primary)", marginBottom: 4 }}>
-              Drop images here or click to browse
-            </div>
-            <div style={{ fontSize: 12, color: "var(--color-text-tertiary)" }}>
-              PNG or JPG, 1920x1080 or larger recommended
-            </div>
-            {/* Hidden file input — triggered by clicking the drop zone above */}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/png,image/jpeg,image/webp"
-              multiple
-              onChange={handleImageUpload}
-              style={{ display: "none" }}
-            />
-          </div>
-
-          {/* Uploaded images grid */}
-          {uploadedImages.length > 0 && (
-            <div style={{ marginTop: 24 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: "#2D6A4F", marginBottom: 4 }}>
-                YOUR IMAGES ({uploadedImages.length}) — Click one to use it for the video
-              </div>
-              <div style={{ fontSize: 12, color: "var(--color-text-tertiary)", marginBottom: 12 }}>
-                {selectedImage
-                  ? `Selected: ${selectedImage}`
-                  : "No image selected — click an image to choose which one to animate"}
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 14 }}>
-                {uploadedImages.map((img, i) => {
-                  const isSelected = selectedImage === img.name;
-                  return (
-                    <div
-                      key={i}
-                      onClick={() => setSelectedImage(img.name)}
-                      style={{
-                        borderRadius: 10, overflow: "hidden", cursor: "pointer",
-                        border: isSelected ? "3px solid #2D6A4F" : "2px solid var(--color-border-tertiary)",
-                        background: "var(--color-background-secondary)",
-                        boxShadow: isSelected ? "0 0 0 3px #D8F3DC" : "none",
-                        transition: "all 0.15s",
-                      }}
-                    >
-                      <div style={{ position: "relative" }}>
-                        <img
-                          src={img.src}
-                          alt={img.name}
-                          style={{ width: "100%", height: 160, objectFit: "cover", display: "block" }}
-                        />
-                        {/* Green checkmark badge on selected image */}
-                        {isSelected && (
-                          <div style={{
-                            position: "absolute", top: 8, left: 8,
-                            background: "#2D6A4F", color: "#fff",
-                            borderRadius: 20, padding: "3px 10px",
-                            fontSize: 12, fontWeight: 700,
-                          }}>✓ Selected</div>
-                        )}
-                        {/* Delete button — stopPropagation prevents also selecting the image */}
-                        <button
-                          onClick={e => { e.stopPropagation(); removeImage(i); }}
-                          style={{
-                            position: "absolute", top: 8, right: 8, width: 28, height: 28,
-                            borderRadius: "50%", background: "rgba(0,0,0,0.6)", color: "#fff",
-                            border: "none", cursor: "pointer", fontSize: 14,
-                            display: "flex", alignItems: "center", justifyContent: "center"
-                          }}>x</button>
-                      </div>
-                      <div style={{ padding: "10px 12px" }}>
-                        <div style={{
-                          fontSize: 13, fontWeight: isSelected ? 600 : 500,
-                          color: isSelected ? "#2D6A4F" : "var(--color-text-primary)",
-                          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis"
-                        }}>{img.name}</div>
-                        <div style={{ fontSize: 11, color: "var(--color-text-tertiary)", marginTop: 2 }}>
-                          {img.size} · {img.date}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
 
       {/* ================================================================== */}
       {/* TAB: RUN PIPELINE                                                   */}
@@ -1031,23 +930,8 @@ function FairwayControlPanel() {
       {tab === "pipeline" && (
         <div style={{ padding: "24px 0" }}>
 
-          {/* Status cards — 2×2 grid */}
+          {/* Status cards */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 24 }}>
-
-            {/* BASE IMAGE card */}
-            <div
-              onClick={() => setTab("upload")}
-              style={{ padding: "16px", borderRadius: 10, border: `1px solid ${selectedImage ? "#2D6A4F" : "var(--color-border-tertiary)"}`, background: "var(--color-background-secondary)", cursor: "pointer" }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: "var(--color-text-tertiary)", letterSpacing: 0.5 }}>BASE IMAGE</div>
-              <div style={{ fontSize: 15, fontWeight: 700, marginTop: 4, color: selectedImage ? "#2D6A4F" : "#9B2C2C" }}>
-                {selectedImage
-                  ? selectedImage.length > 22 ? selectedImage.slice(0, 20) + "…" : selectedImage
-                  : "None selected"}
-              </div>
-              {!selectedImage && (
-                <div style={{ fontSize: 11, color: "#9B2C2C", marginTop: 2 }}>Click to pick one</div>
-              )}
-            </div>
 
             {/* KLING CLIPS card */}
             <div style={{ padding: "16px", borderRadius: 10, border: `1px solid ${klingClipSets.length > 0 ? "#2D6A4F" : "var(--color-border-tertiary)"}`, background: "var(--color-background-secondary)" }}>
@@ -1131,29 +1015,17 @@ function FairwayControlPanel() {
           {/* Run button */}
           <button
             onClick={runPipeline}
-            disabled={!selectedImage || pipelineRunning}
+            disabled={pipelineRunning}
             style={{
               width: "100%", padding: "16px 0", fontSize: 16, fontWeight: 700,
               borderRadius: 10, border: "none", fontFamily: "inherit", letterSpacing: 0.5,
-              cursor: (!selectedImage || pipelineRunning) ? "not-allowed" : "pointer",
-              background: !selectedImage
-                ? "var(--color-border-tertiary)"
-                : pipelineRunning ? "#B08D57" : "#2D6A4F",
-              color: !selectedImage ? "var(--color-text-tertiary)" : "#fff",
+              cursor: pipelineRunning ? "not-allowed" : "pointer",
+              background: pipelineRunning ? "#B08D57" : "#2D6A4F",
+              color: "#fff",
               transition: "all 0.2s"
             }}>
-            {pipelineRunning
-              ? "Pipeline Running..."
-              : !selectedImage
-                ? "Select an image first"
-                : `Run Pipeline — ${selectedImage}`}
+            {pipelineRunning ? "Pipeline Running..." : "Run Pipeline"}
           </button>
-
-          {!selectedImage && (
-            <div style={{ marginTop: 12, fontSize: 13, color: "var(--color-text-tertiary)", textAlign: "center" }}>
-              Go to <strong>Upload Images</strong> and click the image you want to animate
-            </div>
-          )}
 
           {/* Pipeline log */}
           {pipelineLog.length > 0 && (
@@ -1193,6 +1065,226 @@ function FairwayControlPanel() {
                 {/* Invisible anchor for auto-scroll */}
                 <div ref={logEndRef} />
               </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ================================================================== */}
+      {/* TAB: ANALYTICS                                                      */}
+      {/* ================================================================== */}
+      {tab === "analytics" && (
+        <div style={{ padding: "24px 0" }}>
+
+          {/* Header + refresh button */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+            <div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: "var(--color-text-primary)" }}>Channel Analytics</div>
+              <div style={{ fontSize: 12, color: "var(--color-text-tertiary)", marginTop: 2 }}>
+                {analyticsData ? `Last 28 days · Fetched ${new Date(analyticsData.fetched_at).toLocaleTimeString()}` : "Last 28 days"}
+              </div>
+            </div>
+            <button
+              onClick={fetchAnalytics}
+              disabled={analyticsLoading}
+              style={{
+                padding: "9px 18px", fontSize: 13, fontWeight: 600, borderRadius: 8,
+                border: "1px solid #2D6A4F", background: analyticsLoading ? "var(--color-background-secondary)" : "#2D6A4F",
+                color: analyticsLoading ? "var(--color-text-secondary)" : "#fff",
+                cursor: analyticsLoading ? "default" : "pointer", fontFamily: "inherit",
+              }}>
+              {analyticsLoading ? "Fetching…" : "Refresh"}
+            </button>
+          </div>
+
+          {/* Error state */}
+          {analyticsError && (
+            <div style={{
+              padding: "16px", borderRadius: 10, background: "#FFF5F5",
+              border: "1px solid #FC8181", color: "#9B2C2C", fontSize: 13, marginBottom: 20,
+            }}>
+              <strong>Error:</strong> {analyticsError}
+              {analyticsError.includes("not installed") && (
+                <div style={{ marginTop: 8, fontFamily: "monospace", fontSize: 12, background: "#FED7D7", padding: "6px 10px", borderRadius: 6 }}>
+                  pip install google-api-python-client google-auth-oauthlib
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Loading skeleton */}
+          {analyticsLoading && !analyticsData && (
+            <div style={{ textAlign: "center", padding: 40, color: "var(--color-text-tertiary)", fontSize: 14 }}>
+              Connecting to YouTube Analytics…
+              <div style={{ fontSize: 12, marginTop: 8 }}>
+                If this is your first time, a browser window will open for authentication.
+              </div>
+            </div>
+          )}
+
+          {/* Analytics data */}
+          {analyticsData && (
+            <>
+              {/* Channel summary cards */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 28 }}>
+                {[
+                  { label: "VIEWS",          value: analyticsData.channel.views.toLocaleString(),           color: "#2D6A4F" },
+                  { label: "WATCH HOURS",    value: analyticsData.channel.watch_hours.toLocaleString(),      color: "#2D6A4F" },
+                  { label: "SUBS GAINED",    value: `+${analyticsData.channel.subscribers_gained}`,          color: "#276749" },
+                  { label: "NET SUBSCRIBERS",value: (analyticsData.channel.net_subscribers >= 0 ? "+" : "") + analyticsData.channel.net_subscribers,
+                    color: analyticsData.channel.net_subscribers >= 0 ? "#276749" : "#9B2C2C" },
+                ].map(card => (
+                  <div key={card.label} style={{
+                    padding: "16px", borderRadius: 10,
+                    border: "1px solid var(--color-border-tertiary)",
+                    background: "var(--color-background-secondary)",
+                  }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "var(--color-text-tertiary)", letterSpacing: 0.8, marginBottom: 6 }}>
+                      {card.label}
+                    </div>
+                    <div style={{ fontSize: 22, fontWeight: 700, color: card.color }}>
+                      {card.value}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Recommendations */}
+              {(() => {
+                const recs = getRecommendations(analyticsData, usedSceneIds);
+                if (recs.length === 0) return null;
+                const accentStyles = {
+                  green:  { bg: "#D8F3DC", border: "#2D6A4F", iconColor: "#1B4332", titleColor: "#1B4332" },
+                  yellow: { bg: "#FEFCBF", border: "#B7791F", iconColor: "#744210", titleColor: "#744210" },
+                  red:    { bg: "#FFF5F5", border: "#FC8181", iconColor: "#9B2C2C", titleColor: "#9B2C2C" },
+                  blue:   { bg: "#EBF8FF", border: "#63B3ED", iconColor: "#2C5282", titleColor: "#2C5282" },
+                };
+                return (
+                  <div style={{ marginBottom: 28 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "var(--color-text-secondary)", letterSpacing: 0.8, marginBottom: 10 }}>
+                      RECOMMENDATIONS
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                      {recs.map((rec, i) => {
+                        const s = accentStyles[rec.accent] || accentStyles.blue;
+                        return (
+                          <div key={i} style={{
+                            padding: "14px 16px", borderRadius: 10,
+                            background: s.bg, border: `1px solid ${s.border}`,
+                          }}>
+                            <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                              <div style={{ fontSize: 16, color: s.iconColor, lineHeight: 1.3, flexShrink: 0 }}>
+                                {rec.icon}
+                              </div>
+                              <div style={{ flex: 1 }}>
+                                <div style={{ fontSize: 13, fontWeight: 700, color: s.titleColor, marginBottom: 4 }}>
+                                  {rec.title}
+                                </div>
+                                <div style={{ fontSize: 13, color: "var(--color-text-primary)", lineHeight: 1.55, marginBottom: 8 }}>
+                                  {rec.body}
+                                </div>
+                                <div style={{
+                                  fontSize: 12, fontWeight: 600, color: s.iconColor,
+                                  display: "flex", alignItems: "center", gap: 6,
+                                }}>
+                                  <span>→</span>
+                                  {rec.sceneId ? (
+                                    <button onClick={() => { setSelectedScene(rec.sceneId); setTab("create"); }}
+                                      style={{
+                                        background: "none", border: "none", padding: 0, cursor: "pointer",
+                                        fontSize: 12, fontWeight: 600, color: s.iconColor,
+                                        textDecoration: "underline", fontFamily: "inherit",
+                                      }}>
+                                      {rec.action}
+                                    </button>
+                                  ) : (
+                                    <span>{rec.action}</span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Per-video table */}
+              {analyticsData.videos.length > 0 ? (
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "var(--color-text-secondary)", letterSpacing: 0.8, marginBottom: 10 }}>
+                    YOUR VIDEOS
+                  </div>
+                  <div style={{ borderRadius: 10, border: "1px solid var(--color-border-tertiary)", overflow: "hidden" }}>
+                    {/* Table header */}
+                    <div style={{
+                      display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr",
+                      padding: "10px 16px", background: "var(--color-background-secondary)",
+                      borderBottom: "1px solid var(--color-border-tertiary)",
+                      fontSize: 10, fontWeight: 700, color: "var(--color-text-tertiary)", letterSpacing: 0.8,
+                    }}>
+                      <div>TITLE</div>
+                      <div style={{ textAlign: "right" }}>VIEWS</div>
+                      <div style={{ textAlign: "right" }}>WATCH HRS</div>
+                      <div style={{ textAlign: "right" }}>AVG VIEW %</div>
+                      <div style={{ textAlign: "right" }}>LIKES</div>
+                    </div>
+                    {/* Table rows */}
+                    {analyticsData.videos.map((v, i) => (
+                      <div key={v.video_id} style={{
+                        display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr",
+                        padding: "12px 16px", fontSize: 13, alignItems: "center",
+                        borderBottom: i < analyticsData.videos.length - 1 ? "1px solid var(--color-border-tertiary)" : "none",
+                        background: i % 2 === 0 ? "transparent" : "var(--color-background-secondary)",
+                      }}>
+                        <div>
+                          <a href={v.url} target="_blank" rel="noopener noreferrer"
+                            style={{ color: "#2D6A4F", fontWeight: 600, textDecoration: "none", fontSize: 13 }}>
+                            {v.title.length > 45 ? v.title.slice(0, 43) + "…" : v.title}
+                          </a>
+                          {v.published && (
+                            <div style={{ fontSize: 11, color: "var(--color-text-tertiary)", marginTop: 2 }}>
+                              Published {v.published}
+                            </div>
+                          )}
+                        </div>
+                        <div style={{ textAlign: "right", fontWeight: 600 }}>{v.views.toLocaleString()}</div>
+                        <div style={{ textAlign: "right" }}>{v.watch_hours.toLocaleString()}</div>
+                        <div style={{ textAlign: "right" }}>
+                          <span style={{
+                            padding: "2px 8px", borderRadius: 12, fontSize: 12, fontWeight: 600,
+                            background: v.avg_view_pct >= 40 ? "#D8F3DC" : v.avg_view_pct >= 20 ? "#FEFCBF" : "#FFF5F5",
+                            color: v.avg_view_pct >= 40 ? "#1B4332" : v.avg_view_pct >= 20 ? "#744210" : "#9B2C2C",
+                          }}>
+                            {v.avg_view_pct}%
+                          </span>
+                        </div>
+                        <div style={{ textAlign: "right" }}>{v.likes.toLocaleString()}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div style={{
+                  padding: "24px", borderRadius: 10, border: "1px solid var(--color-border-tertiary)",
+                  textAlign: "center", color: "var(--color-text-tertiary)", fontSize: 13,
+                }}>
+                  No tracked videos yet. After uploading a video with --upload, it will appear here.
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Empty state — no data, not loading, no error */}
+          {!analyticsData && !analyticsLoading && !analyticsError && (
+            <div style={{
+              padding: "40px", textAlign: "center", borderRadius: 10,
+              border: "1px solid var(--color-border-tertiary)", color: "var(--color-text-tertiary)",
+            }}>
+              <div style={{ fontSize: 14, marginBottom: 8 }}>Click Refresh to load your YouTube Analytics.</div>
+              <div style={{ fontSize: 12 }}>Requires YouTube OAuth credentials in .env</div>
             </div>
           )}
         </div>

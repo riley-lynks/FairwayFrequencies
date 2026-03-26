@@ -79,11 +79,27 @@ Rules:
 - When in doubt → STUDY MUSIC (highest search volume)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CHAPTER NAMES RULES:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+The user message will include a list of chapter timestamps (e.g. "0:00, 0:30:00, 1:00:00, 1:30:00").
+Write one evocative chapter name for each timestamp — the names should arc through the listening session like a round of golf.
+Rules:
+- 3-5 words each — evocative, not generic
+- Arc: opening arrival → deep focus/flow → midway → back nine → closing
+- Match the scene mood and time of day from the image
+- Do NOT include the timestamps in the names — just the label text
+- The list must have exactly the same count as the timestamps provided
+
+Example names for a misty dawn 2-hour video:
+  ["First Light on the Course", "Settling In", "Into the Flow", "The Back Nine"]
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 JSON SCHEMA:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 {
   "title": "string — under 70 chars",
   "description": "string — 500-900 chars with newlines as \\n",
   "tags": ["array", "of", "25-30", "tags", "no", "#", "symbols"],
-  "thumbnail_text": "string — exactly one phrase from the approved list above"
+  "thumbnail_text": "string — exactly one phrase from the approved list above",
+  "chapter_names": ["one name per chapter timestamp, same count as timestamps provided"]
 }

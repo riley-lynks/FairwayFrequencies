@@ -238,9 +238,10 @@ def generate_prompt_api():
         return jsonify({"error": "No scene description provided"}), 400
 
     # If no Anthropic key is set, build prompts locally without Claude.
-    # The UI always gets a well-structured response — it never sees a 503.
     if not config.ANTHROPIC_API_KEY:
-        image_prompt = f"Elevated wide view of a {scene}, {config.STYLE_SUFFIX}"
+        from pipeline.orchestrator import get_current_art_style
+        art_style = get_current_art_style()
+        image_prompt = f"Elevated wide view of a {scene}, {art_style['style_suffix']}"
         mj_prompt = f"{image_prompt} --ar 16:9 --v 7 --s {stylize}"
         orchestration = {
             "image_prompt": image_prompt,
@@ -648,6 +649,117 @@ def list_output_files():
 
     videos.sort(key=lambda x: x["date"], reverse=True)
     return jsonify({"videos": videos})
+
+
+# =============================================================================
+# SCENE GENERATION API
+# =============================================================================
+
+@app.route("/api/generate-scene", methods=["POST"])
+def generate_scene():
+    """
+    Ask Claude to generate a fresh, seasonal golf scene prompt for this month's art style.
+
+    Returns:
+        JSON: { scene: "...", art_style: { name, short, description, accent } }
+    """
+    try:
+        from pipeline.orchestrator import generate_scene_prompt, get_current_art_style
+        from pipeline.scene_tracker import load_scene_history
+
+        if not config.ANTHROPIC_API_KEY:
+            return jsonify({"error": "ANTHROPIC_API_KEY not set in .env"}), 400
+
+        scene, art_style = generate_scene_prompt(
+            api_key=config.ANTHROPIC_API_KEY,
+            claude_model=config.CLAUDE_MODEL,
+            scene_history=load_scene_history(),
+        )
+
+        return jsonify({
+            "scene": scene,
+            "art_style": {
+                "name": art_style["name"],
+                "short": art_style["short"],
+                "description": art_style["description"],
+                "accent": art_style["accent"],
+            },
+        })
+
+    except Exception as e:
+        app.logger.error(f"Scene generation failed: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/current-art-style", methods=["GET"])
+def current_art_style():
+    """Return the art style active this month (no Claude call needed)."""
+    from pipeline.orchestrator import get_current_art_style
+    s = get_current_art_style()
+    return jsonify({
+        "name": s["name"],
+        "short": s["short"],
+        "description": s["description"],
+        "accent": s["accent"],
+    })
+
+
+# =============================================================================
+# SCENE HISTORY API
+# =============================================================================
+
+@app.route("/api/scene-history", methods=["GET"])
+def get_scene_history():
+    """
+    Return the scene usage history from output/scene_history.json.
+
+    Returns:
+        JSON: {
+            history: [ { scene_id, scene_name, prompt, used_at } ],
+            used_ids: { scene_id: days_ago }
+        }
+    """
+    from pipeline.scene_tracker import load_scene_history, get_used_scene_ids
+    return jsonify({
+        "history": load_scene_history(),
+        "used_ids": get_used_scene_ids(),
+    })
+
+
+# =============================================================================
+# ANALYTICS API
+# =============================================================================
+
+@app.route("/api/analytics", methods=["GET"])
+def get_analytics():
+    """
+    Fetch a YouTube Analytics report for the channel.
+
+    Pulls last-28-day totals and per-video stats for tracked uploads.
+    On first call, opens a browser for OAuth authentication.
+
+    Returns:
+        JSON: {
+            channel: { views, watch_hours, net_subscribers, ... },
+            videos:  [ { title, views, watch_hours, avg_view_pct, likes, url } ],
+            period:  "Last 28 days",
+            fetched_at: "..."
+        }
+    """
+    try:
+        from pipeline.analytics import fetch_analytics
+
+        client_id = config.YOUTUBE_CLIENT_ID
+        client_secret = config.YOUTUBE_CLIENT_SECRET
+
+        report = fetch_analytics(client_id, client_secret)
+        return jsonify(report)
+
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        app.logger.error(f"Analytics fetch failed: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 # =============================================================================

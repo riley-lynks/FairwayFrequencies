@@ -485,26 +485,30 @@ def _concatenate_batches(
     local_logger,
 ):
     """
-    Concatenate multiple batch files into the final video.
+    Concatenate batch files into the final video using two-level xfade batching.
 
-    We apply short crossfades between batches too, for seamless stitching.
-    Since batches are processed from the same clip pool, the transitions
-    are equally invisible.
+    WHY two levels? FFmpeg's xfade filter supports at most ~10 inputs per call
+    (9 xfade operations). A 2-hour video produces ~90 batch files, so we can't
+    xfade them all in one pass.
 
-    For a large number of batches, we use FFmpeg's concat demuxer (simpler
-    and more memory-efficient than filter_complex for large file counts).
+    Solution — two-level batching:
+      Level 1: batch_files → super-batches (BATCH_SIZE batches each, xfaded)
+      Level 2: super-batches → final video (xfaded if ≤ BATCH_SIZE, else recurse)
+
+    This guarantees seamless crossfades at EVERY join point in the video —
+    no hard cuts anywhere, regardless of how long the video is.
 
     Args:
-        batch_files:  List of batch video paths.
-        blend_seconds: Crossfade duration between batches.
+        batch_files:   List of batch video paths.
+        blend_seconds: Crossfade duration between segments.
         output_path:   Final output video path.
         local_logger:  Logger.
     """
     n = len(batch_files)
-    local_logger.info(f"  Concatenating {n} batches...")
+    local_logger.info(f"  Joining {n} batches with crossfades...")
 
     if n <= BATCH_SIZE:
-        # Few enough batches to xfade directly
+        # Small enough to xfade in a single pass
         batch_durations = {p: get_video_duration(p) for p in batch_files}
         _apply_xfade_batch(
             clips=batch_files,
@@ -513,37 +517,44 @@ def _concatenate_batches(
             output_path=output_path,
             local_logger=local_logger,
         )
-    else:
-        # Many batches — use the simpler concat demuxer for the final join
-        # WHY concat demuxer here? For very large numbers of batches, the
-        # filter_complex approach hits FFmpeg's limits again. The concat
-        # demuxer streams files together without a crossfade, but since
-        # each batch already has smooth internal transitions, the batch
-        # boundaries are the only potential visible cuts.
-        concat_list_path = output_path.replace(".mp4", "_concat_list.txt")
-        with open(concat_list_path, "w") as f:
-            for batch_file in batch_files:
-                # FFmpeg concat list format requires absolute paths or paths
-                # relative to the list file, with forward slashes
-                abs_path = os.path.abspath(batch_file).replace("\\", "/")
-                f.write(f"file '{abs_path}'\n")
+        return
 
-        cmd = [
-            "ffmpeg", "-y",
-            "-f", "concat",          # Use the concat demuxer
-            "-safe", "0",            # Allow absolute paths in the list
-            "-i", concat_list_path,
-            "-c", "copy",            # Copy streams without re-encoding (fast!)
-            output_path,
-        ]
+    # More than BATCH_SIZE files — group them into super-batches and xfade each group,
+    # then recursively join the resulting super-batch files.
+    super_batch_dir = os.path.dirname(output_path)
+    super_batch_files = []
+    chunks = [batch_files[i:i+BATCH_SIZE] for i in range(0, n, BATCH_SIZE)]
+    total = len(chunks)
 
-        try:
-            subprocess.run(cmd, capture_output=True, text=True, check=True,
-                           creationflags=subprocess.CREATE_NO_WINDOW)
-        except subprocess.CalledProcessError as e:
-            raise RuntimeError(
-                f"FFmpeg concat failed: {e.stderr[-500:]}"
-            )
+    for idx, chunk in enumerate(chunks):
+        super_path = os.path.join(
+            super_batch_dir, f"super_{os.path.basename(output_path).replace('.mp4', '')}_{idx:04d}.mp4"
+        )
+
+        if os.path.exists(super_path):
+            local_logger.debug(f"  Super-batch {idx+1}/{total} already exists, skipping")
+            super_batch_files.append(super_path)
+            continue
+
+        local_logger.info(f"  Super-batch {idx+1}/{total} ({len(chunk)} segments)...")
+        chunk_durations = {p: get_video_duration(p) for p in chunk}
+        _apply_xfade_batch(
+            clips=chunk,
+            clip_durations=chunk_durations,
+            blend_seconds=blend_seconds,
+            output_path=super_path,
+            local_logger=local_logger,
+        )
+        super_batch_files.append(super_path)
+
+    # Recursively join the super-batches (will be ≤ BATCH_SIZE in almost all cases)
+    local_logger.info(f"  Joining {len(super_batch_files)} super-batches...")
+    _concatenate_batches(
+        batch_files=super_batch_files,
+        blend_seconds=blend_seconds,
+        output_path=output_path,
+        local_logger=local_logger,
+    )
 
 
 def get_video_duration(video_path: str) -> float:

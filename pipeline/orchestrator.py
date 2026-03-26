@@ -25,6 +25,7 @@ import time       # For retry delays
 import logging    # For progress messages
 import random     # For randomly deciding whether to include a character
 import os         # For reading the system prompt file
+from datetime import datetime
 
 import anthropic  # The official Anthropic Python SDK — makes Claude API calls easy
 
@@ -32,8 +33,171 @@ import config     # Our configuration settings (API keys, style suffix, etc.)
 
 logger = logging.getLogger("fairway.orchestrator")
 
+# =============================================================================
+# MONTHLY ART STYLE ROTATION
+# =============================================================================
+# 4 styles rotate monthly. Each style affects the image prompt suffix,
+# the orchestrator's art direction instructions, and (automatically) the
+# thumbnail since it's extracted from the rendered video.
+#
+# Rotation (0-indexed by (month-1) % 4):
+#   0 → Ghibli Anime     (Jan, May, Sep)
+#   1 → Photorealistic   (Feb, Jun, Oct)
+#   2 → Watercolour      (Mar, Jul, Nov)  ← current month
+#   3 → Oil Painting     (Apr, Aug, Dec)
 
-def load_system_prompt() -> str:
+ART_STYLES = [
+    {
+        "name": "Studio Ghibli Anime",
+        "short": "Ghibli",
+        "description": "Hand-painted anime aesthetic. Rich saturated colors, soft natural light, dreamlike atmosphere.",
+        "art_direction": (
+            "Every image must be an illustrated Studio Ghibli anime background painting. "
+            "Hand-painted look, rich saturated colors, clean linework, lush detailed foliage, "
+            "warm natural lighting, soft puffy clouds, visible brushstroke texture, Hayao Miyazaki inspired. "
+            "NOT photorealistic. NOT cartoonish."
+        ),
+        "style_suffix": (
+            "in the style of a detailed Studio Ghibli anime background painting, "
+            "hand-painted, vibrant saturated colors, clean linework, lush detailed landscape, "
+            "warm natural lighting, soft puffy clouds, visible brushstroke texture, "
+            "concept art quality, 16:9 widescreen composition, no text, no UI elements"
+        ),
+        "accent": "#2D6A4F",
+    },
+    {
+        "name": "Cinematic Photorealistic",
+        "short": "Cinematic",
+        "description": "Film-quality photography look. Dramatic golden-hour lighting, shallow depth of field.",
+        "art_direction": (
+            "Every image must be cinematic photorealistic photography. "
+            "Shot on RED cinema camera, golden-hour or blue-hour lighting, shallow depth of field, "
+            "35mm prime lens, subtle film grain, National Geographic quality, ultra-detailed. "
+            "NOT illustrated. NOT animated-looking."
+        ),
+        "style_suffix": (
+            "cinematic photorealistic photography, RED camera, golden hour lighting, "
+            "shallow depth of field, 35mm lens, film grain, National Geographic quality, "
+            "ultra detailed, dramatic sky, 16:9 widescreen composition, no text, no UI elements"
+        ),
+        "accent": "#744210",
+    },
+    {
+        "name": "Soft Watercolour",
+        "short": "Watercolour",
+        "description": "Delicate watercolour illustration. Soft washes, paper texture, impressionistic.",
+        "art_direction": (
+            "Every image must be a soft watercolour illustration. "
+            "Delicate washes of color, visible paper texture, loose impressionistic brushwork, "
+            "warm muted palette, fine art quality, translucent layering. "
+            "NOT digital-looking. NOT photorealistic."
+        ),
+        "style_suffix": (
+            "soft watercolour illustration, delicate color washes, visible watercolour paper texture, "
+            "loose impressionistic brushwork, warm muted palette, fine art quality, "
+            "translucent layering, 16:9 widescreen composition, no text, no UI elements"
+        ),
+        "accent": "#2C5282",
+    },
+    {
+        "name": "Rich Oil Painting",
+        "short": "Oil Painting",
+        "description": "Classical oil painting. Impasto texture, Old Masters drama, rich deep colors.",
+        "art_direction": (
+            "Every image must be a classical oil painting. "
+            "Rich impasto texture, Old Masters technique, dramatic chiaroscuro lighting, "
+            "deep saturated colors, gallery quality, visible painterly brushstrokes, "
+            "Romanticism era landscape style. "
+            "NOT modern. NOT photorealistic."
+        ),
+        "style_suffix": (
+            "classical oil painting, rich impasto texture, Old Masters technique, "
+            "dramatic chiaroscuro lighting, deep saturated colors, gallery quality, "
+            "painterly brushstrokes, Romanticism landscape, "
+            "16:9 widescreen composition, no text, no UI elements"
+        ),
+        "accent": "#702459",
+    },
+]
+
+
+def get_current_art_style() -> dict:
+    """
+    Return the art style dict for the current month.
+
+    Rotates through ART_STYLES every month:
+      Jan/May/Sep → Ghibli, Feb/Jun/Oct → Cinematic,
+      Mar/Jul/Nov → Watercolour, Apr/Aug/Dec → Oil Painting
+    """
+    month = datetime.now().month
+    return ART_STYLES[(month - 1) % 4]
+
+
+def generate_scene_prompt(
+    api_key: str,
+    claude_model: str,
+    scene_history: list = None,
+) -> tuple:
+    """
+    Ask Claude to generate a fresh, seasonal golf scene prompt for this month's art style.
+
+    Args:
+        api_key:       Anthropic API key.
+        claude_model:  Model ID to use.
+        scene_history: List of past scene entries from scene_history.json (to avoid repeats).
+
+    Returns:
+        (scene_description: str, art_style: dict)
+    """
+    art_style = get_current_art_style()
+    month_name = datetime.now().strftime("%B")
+    season = _month_to_season(datetime.now().month)
+
+    # Build recently-used list to steer Claude away from repetition
+    avoid_text = ""
+    if scene_history:
+        recent_names = [h.get("scene_name", h.get("prompt", ""))[:60]
+                        for h in scene_history[:8] if h.get("scene_id") != "custom"]
+        if recent_names:
+            avoid_text = "\n\nRECENTLY USED (avoid these moods/locations):\n" + \
+                         "\n".join(f"- {n}" for n in recent_names)
+
+    system = (
+        "You are a creative director for Fairway Frequencies, a LoFi golf YouTube channel. "
+        "Generate ONE vivid golf course scene description. Keep it to 2-3 sentences. "
+        "Include a specific time of day, weather/atmosphere, and location type. "
+        "Match the season. Evoke calm and peace. "
+        "Do NOT mention the art style — it is applied automatically. "
+        "Return ONLY the scene description. No title, no preamble, no quotes."
+    )
+
+    user_message = (
+        f"Month: {month_name} ({season})\n"
+        f"Art style this month: {art_style['name']} — {art_style['description']}"
+        f"{avoid_text}\n\n"
+        "Generate a fresh golf scene for this month."
+    )
+
+    client = anthropic.Anthropic(api_key=api_key)
+    response = client.messages.create(
+        model=claude_model,
+        max_tokens=200,
+        system=system,
+        messages=[{"role": "user", "content": user_message}],
+    )
+
+    scene = response.content[0].text.strip().strip('"').strip("'")
+    return scene, art_style
+
+
+def _month_to_season(month: int) -> str:
+    if month in (12, 1, 2):   return "winter"
+    if month in (3, 4, 5):    return "spring"
+    if month in (6, 7, 8):    return "summer"
+    return "autumn"
+
+
+def load_system_prompt(art_style: dict = None) -> str:
     """
     Load the orchestrator system prompt from the prompts/ directory.
 
@@ -57,8 +221,10 @@ def load_system_prompt() -> str:
     with open(prompt_path, "r", encoding="utf-8") as f:
         prompt_text = f.read()
 
-    # Replace the {STYLE_SUFFIX} placeholder with the actual suffix from config
-    return prompt_text.replace("{STYLE_SUFFIX}", config.STYLE_SUFFIX)
+    style = art_style or get_current_art_style()
+    prompt_text = prompt_text.replace("{STYLE_SUFFIX}", style["style_suffix"])
+    prompt_text = prompt_text.replace("{ART_DIRECTION}", style["art_direction"])
+    return prompt_text
 
 
 def _get_inline_system_prompt() -> str:
@@ -151,6 +317,7 @@ def decompose_prompt(
     character_mode: str,
     style_suffix: str,
     animation_variations: list,
+    art_style: dict = None,
 ) -> dict:
     """
     Decompose a scene prompt into structured sub-prompts for the pipeline.
@@ -202,8 +369,9 @@ The image must have excellent composition for animation — rich foreground, mid
     logger.debug(f"  Calling Claude ({config.CLAUDE_MODEL}) for prompt decomposition...")
     logger.debug(f"  Include character: {include_character}")
 
-    # Load the system prompt (from file or inline fallback)
-    system_prompt = load_system_prompt()
+    # Load the system prompt with the correct art style for this month
+    active_style = art_style or get_current_art_style()
+    system_prompt = load_system_prompt(active_style)
 
     # Call the Claude API with retry logic
     orchestration = _call_claude_with_retry(

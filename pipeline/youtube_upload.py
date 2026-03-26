@@ -211,7 +211,35 @@ def upload_to_youtube(
     local_logger.info(f"  Publishes automatically: {publish_day}")
     local_logger.info("  To change schedule: YouTube Studio → Videos → click the video → Visibility")
 
+    # Track the video ID for the analytics dashboard
+    _save_video_to_tracker(video_id, metadata.get("title", ""), publish_at_str)
+
     return video_url
+
+
+def _save_video_to_tracker(video_id: str, title: str, publish_at: str):
+    """Append this video to output/video_tracker.json for the analytics dashboard."""
+    tracker_file = "output/video_tracker.json"
+    os.makedirs("output", exist_ok=True)
+
+    existing = []
+    if os.path.exists(tracker_file):
+        try:
+            with open(tracker_file, "r") as f:
+                existing = json.load(f)
+        except Exception:
+            existing = []
+
+    # Avoid duplicates
+    if not any(v.get("video_id") == video_id for v in existing):
+        existing.append({
+            "video_id": video_id,
+            "title": title,
+            "uploaded_at": datetime.now(timezone(timedelta(hours=-5))).isoformat(),
+            "publish_at": publish_at,
+        })
+        with open(tracker_file, "w") as f:
+            json.dump(existing, f, indent=2)
 
 
 def _get_youtube_client(client_id: str, client_secret: str):

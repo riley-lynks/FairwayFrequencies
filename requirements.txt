@@ -44,5 +44,5 @@ flask-cors>=4.0.0
 # Install these separately if you want YouTube integration:
 #   pip install google-api-python-client google-auth-oauthlib
 # =============================================================================
-# google-api-python-client>=2.100.0
-# google-auth-oauthlib>=1.1.0
+google-api-python-client>=2.100.0
+google-auth-oauthlib>=1.1.0

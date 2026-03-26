@@ -48,7 +48,7 @@ import config
 
 # Import all the pipeline stage modules from the pipeline/ folder
 # Each module handles one stage of the production process
-from pipeline.orchestrator import decompose_prompt
+from pipeline.orchestrator import decompose_prompt, generate_scene_prompt, get_current_art_style
 from pipeline.video_import import import_video_clips
 from pipeline.video_assembly import assemble_living_painting
 from pipeline.music_gen import get_music_track
@@ -58,6 +58,7 @@ from pipeline.final_render import render_final_video
 from pipeline.metadata_gen import generate_metadata
 from pipeline.thumbnail_gen import generate_thumbnail
 from pipeline.youtube_upload import upload_to_youtube
+from pipeline.scene_tracker import log_scene_use
 
 
 # =============================================================================
@@ -356,11 +357,13 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
         logger.info("[Stage 1/10] Decomposing scene prompt with Claude...")
         logger.info(f"  Scene: \"{prompt}\"")
 
+        art_style = get_current_art_style()
         orchestration = decompose_prompt(
             scene_prompt=prompt,
             character_mode=character_mode,
-            style_suffix=config.STYLE_SUFFIX,
+            style_suffix=art_style["style_suffix"],
             animation_variations=config.ANIMATION_VARIATIONS,
+            art_style=art_style,
         )
 
         state["orchestration"] = orchestration
@@ -586,6 +589,7 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
         metadata = generate_metadata(
             scene_prompt=prompt,
             orchestration=orchestration,
+            duration_hours=target_hours,
             image_path=base_image_path,
             api_key=config.ANTHROPIC_API_KEY,
             claude_model=config.CLAUDE_MODEL,
@@ -652,6 +656,12 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
     # =========================================================================
     # SUMMARY
     # =========================================================================
+    # Log the scene to history for the analytics recommendations panel
+    try:
+        log_scene_use(prompt, scene_library=load_scene_library())
+    except Exception:
+        pass  # Never let tracking break a successful run
+
     elapsed = time.time() - start_time
     elapsed_min = elapsed / 60
 
@@ -828,15 +838,21 @@ def main():
         args.images = args.images or config.IMAGE_SOURCE
         prompt = "Sunny morning, classic parkland course, gentle hills, puffy clouds"
     elif args.random:
-        # Pick a random scene from the library
-        scenes = load_scene_library()
-        if not scenes:
-            print("\n✗ Scene library is empty. Check prompts/scene_library.json")
+        # Ask Claude to generate a fresh seasonal scene for this month's art style
+        art_style = get_current_art_style()
+        print(f"\n  Generating scene ({art_style['name']} — {art_style['short']})...")
+        from pipeline.scene_tracker import load_scene_history
+        try:
+            prompt, _ = generate_scene_prompt(
+                api_key=config.ANTHROPIC_API_KEY,
+                claude_model=config.CLAUDE_MODEL,
+                scene_history=load_scene_history(),
+            )
+            print(f"  Scene: {prompt}\n")
+        except Exception as e:
+            print(f"\n✗ Scene generation failed: {e}")
+            print("  Check your ANTHROPIC_API_KEY in .env")
             sys.exit(1)
-        scene = random.choice(scenes)
-        prompt = scene["description"]
-        print(f"\n🎲 Random scene selected: {scene['name']}")
-        print(f"   {prompt}\n")
     else:
         # Use the prompt provided on the command line
         prompt = args.prompt
