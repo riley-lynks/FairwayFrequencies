@@ -28,6 +28,7 @@
 import os
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger("fairway.youtube_upload")
 
@@ -50,6 +51,39 @@ YOUTUBE_SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
 
 # Where to store the OAuth token after first login
 TOKEN_FILE = ".youtube_token.json"
+
+
+def next_optimal_publish_time() -> datetime:
+    """
+    Calculate the next optimal YouTube publish time.
+
+    Target: Thursday or Friday between 6–9pm EST.
+    Study/lofi music audiences are most active late week evenings.
+
+    Returns:
+        A timezone-aware datetime for the next Thu or Fri at 7pm EST.
+    """
+    est = timezone(timedelta(hours=-5))  # EST (UTC-5); accounts for standard time
+    now = datetime.now(est)
+    target_hour = 19  # 7pm EST
+
+    # Weekday numbers: 0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri
+    target_days = [3, 4]  # Thursday, Friday
+
+    for days_ahead in range(7):
+        candidate = now + timedelta(days=days_ahead)
+        if candidate.weekday() in target_days:
+            publish_dt = candidate.replace(
+                hour=target_hour, minute=0, second=0, microsecond=0
+            )
+            # If that slot is in the past today, skip to next target day
+            if publish_dt > now:
+                return publish_dt
+
+    # Fallback: 7 days from now at 7pm (should never hit this)
+    return (now + timedelta(days=7)).replace(
+        hour=target_hour, minute=0, second=0, microsecond=0
+    )
 
 
 def upload_to_youtube(
@@ -100,6 +134,11 @@ def upload_to_youtube(
     local_logger.info("  Authenticating with YouTube...")
     youtube = _get_youtube_client(client_id, client_secret)
 
+    # Calculate the optimal publish time (next Thu or Fri at 7pm EST)
+    publish_at = next_optimal_publish_time()
+    publish_at_str = publish_at.strftime("%Y-%m-%dT%H:%M:%S%z")
+    publish_day = publish_at.strftime("%A %B %-d at %-I:%M%p EST")
+
     # Prepare the video metadata for the YouTube API
     # YouTube uses numeric category IDs — 10 = Music
     body = {
@@ -111,15 +150,15 @@ def upload_to_youtube(
             "defaultLanguage": "en",
         },
         "status": {
-            "privacyStatus": "unlisted",  # Upload unlisted — review before going public
+            "privacyStatus": "private",      # Private until publish time
+            "publishAt": publish_at_str,      # YouTube auto-publishes at this time
             "selfDeclaredMadeForKids": False,
-            # YouTube AI disclosure — required for AI-generated realistic content
-            # Our content is illustrated/anime style but we disclose proactively
             "containsSyntheticMedia": True,
         },
     }
 
     local_logger.info(f"  Uploading: {metadata.get('title', 'Fairway Frequencies Video')}")
+    local_logger.info(f"  Scheduled to publish: {publish_day}")
     local_logger.info(f"  File size: {os.path.getsize(video_path) / (1024**3):.2f}GB")
     local_logger.info("  This may take several minutes for a 2-3 hour video...")
 
@@ -168,8 +207,9 @@ def upload_to_youtube(
             local_logger.info("  (You can set the thumbnail manually in YouTube Studio)")
 
     video_url = f"https://youtu.be/{video_id}"
-    local_logger.info(f"\n  ✓ Video uploaded (unlisted): {video_url}")
-    local_logger.info("  To make it public: YouTube Studio → Videos → click the video → Visibility → Public")
+    local_logger.info(f"\n  ✓ Video uploaded and scheduled: {video_url}")
+    local_logger.info(f"  Publishes automatically: {publish_day}")
+    local_logger.info("  To change schedule: YouTube Studio → Videos → click the video → Visibility")
 
     return video_url
 
