@@ -338,6 +338,7 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
     include_ambience = not getattr(args, 'no_ambience', False) and config.INCLUDE_AMBIENCE
     character_mode = getattr(args, 'character', None) or config.INCLUDE_CHARACTER
     target_hours = getattr(args, 'duration', None) or config.TARGET_DURATION_HOURS
+    image_source = getattr(args, 'images', None) or config.IMAGE_SOURCE
 
     # Create subdirectories inside this run's folder
     clips_dir = os.path.join(run_dir, "clips")      # Raw video clips go here
@@ -651,7 +652,7 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
         )
         logger.info("  ✓ Upload complete")
     else:
-        logger.info("[Stage 10/10] YouTube upload — skipped (add --upload to enable)")
+        logger.info("[Stage 10/10] YouTube upload — skipped (pass --no-upload to skip)")
 
     # =========================================================================
     # SUMMARY
@@ -738,10 +739,12 @@ def parse_args():
 
     # YouTube upload
     parser.add_argument(
-        "--upload",
-        action="store_true",
-        help="Upload to YouTube as unlisted after generation (requires YouTube API setup)"
+        "--no-upload",
+        dest="upload",
+        action="store_false",
+        help="Skip YouTube upload (upload is on by default; requires YouTube API setup)"
     )
+    parser.set_defaults(upload=True)
 
     # Convenience flags
     parser.add_argument(

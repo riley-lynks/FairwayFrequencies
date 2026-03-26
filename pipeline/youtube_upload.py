@@ -53,31 +53,48 @@ YOUTUBE_SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
 TOKEN_FILE = ".youtube_token.json"
 
 
-def next_optimal_publish_time() -> datetime:
+def next_optimal_publish_time(tracker_file: str = "output/video_tracker.json") -> datetime:
     """
-    Calculate the next optimal YouTube publish time.
+    Calculate the next optimal YouTube publish time, skipping already-booked slots.
 
-    Target: Thursday or Friday between 6–9pm EST.
-    Study/lofi music audiences are most active late week evenings.
+    Target: Thursday or Friday at 7pm EST.
+    Checks the video tracker to avoid scheduling two videos on the same day —
+    so running the pipeline 3x in a row will spread videos across 3 separate weeks.
 
     Returns:
-        A timezone-aware datetime for the next Thu or Fri at 7pm EST.
+        A timezone-aware datetime for the next available Thu or Fri at 7pm EST.
     """
     est = timezone(timedelta(hours=-5))  # EST (UTC-5); accounts for standard time
     now = datetime.now(est)
     target_hour = 19  # 7pm EST
 
+    # Load already-scheduled future publish dates from the tracker
+    booked_dates = set()
+    if os.path.exists(tracker_file):
+        try:
+            with open(tracker_file, "r") as f:
+                tracker = json.load(f)
+            for entry in tracker:
+                pa = entry.get("publish_at")
+                if pa:
+                    # Parse just the date/time portion (timezone-safe across Python versions)
+                    dt = datetime.strptime(pa[:19], "%Y-%m-%dT%H:%M:%S")
+                    if dt > now.replace(tzinfo=None):
+                        booked_dates.add(dt.date())
+        except Exception:
+            pass  # Tracker unreadable — proceed without it
+
+    # Walk forward through Thu/Fri slots until we find an open one
     # Weekday numbers: 0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri
     target_days = [3, 4]  # Thursday, Friday
 
-    for days_ahead in range(7):
+    for days_ahead in range(60):  # Look up to ~2 months ahead
         candidate = now + timedelta(days=days_ahead)
         if candidate.weekday() in target_days:
             publish_dt = candidate.replace(
                 hour=target_hour, minute=0, second=0, microsecond=0
             )
-            # If that slot is in the past today, skip to next target day
-            if publish_dt > now:
+            if publish_dt > now and publish_dt.date() not in booked_dates:
                 return publish_dt
 
     # Fallback: 7 days from now at 7pm (should never hit this)

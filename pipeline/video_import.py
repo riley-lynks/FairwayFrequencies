@@ -21,7 +21,7 @@ logger = logging.getLogger("fairway.video_import")
 
 VIDEO_CLIPS_DIR = os.path.join("assets", "video_clips")
 
-MIN_CLIPS_REQUIRED = 3
+MIN_CLIPS_REQUIRED = 1
 
 
 def list_clip_sets() -> list:

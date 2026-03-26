@@ -483,29 +483,34 @@ def _concatenate_batches(
     blend_seconds: float,
     output_path: str,
     local_logger,
+    _depth: int = 0,
 ):
     """
-    Concatenate batch files into the final video using two-level xfade batching.
+    Concatenate batch files into the final video using recursive xfade batching.
 
-    WHY two levels? FFmpeg's xfade filter supports at most ~10 inputs per call
-    (9 xfade operations). A 2-hour video produces ~90 batch files, so we can't
+    WHY recursive? FFmpeg's xfade filter supports at most ~10 inputs per call
+    (9 xfade operations). A 2-hour video produces ~260 batch files, so we can't
     xfade them all in one pass.
 
-    Solution — two-level batching:
-      Level 1: batch_files → super-batches (BATCH_SIZE batches each, xfaded)
-      Level 2: super-batches → final video (xfaded if ≤ BATCH_SIZE, else recurse)
+    Solution — recursive batching:
+      Level 0: batch_files → super-batches in _sb_0_<name>/ (BATCH_SIZE each, xfaded)
+      Level 1: super-batches → super-super-batches in _sb_1_<name>/ (if still > BATCH_SIZE)
+      ...until ≤ BATCH_SIZE files remain, then xfade directly to output_path.
 
-    This guarantees seamless crossfades at EVERY join point in the video —
-    no hard cuts anywhere, regardless of how long the video is.
+    WHY depth-based subdirectories? Without them, each recursion level would try to
+    create files with the same names, find the previous level's files already there,
+    skip them, and join only BATCH_SIZE segments instead of all of them — producing a
+    video far shorter than the target duration.
 
     Args:
         batch_files:   List of batch video paths.
         blend_seconds: Crossfade duration between segments.
         output_path:   Final output video path.
         local_logger:  Logger.
+        _depth:        Internal recursion depth (do not pass manually).
     """
     n = len(batch_files)
-    local_logger.info(f"  Joining {n} batches with crossfades...")
+    local_logger.info(f"  Joining {n} batches with crossfades (depth={_depth})...")
 
     if n <= BATCH_SIZE:
         # Small enough to xfade in a single pass
@@ -521,15 +526,23 @@ def _concatenate_batches(
 
     # More than BATCH_SIZE files — group them into super-batches and xfade each group,
     # then recursively join the resulting super-batch files.
-    super_batch_dir = os.path.dirname(output_path)
+    #
+    # Use a depth-specific subdirectory so that each recursion level writes to a
+    # unique location. Without this, level N+1 would find level N's files already
+    # on disk (same name pattern), skip creating them, and join only BATCH_SIZE
+    # segments instead of all — producing a truncated video.
+    base_name = os.path.basename(output_path).replace('.mp4', '')
+    super_batch_dir = os.path.join(
+        os.path.dirname(output_path), f"_sb_{_depth}_{base_name}"
+    )
+    os.makedirs(super_batch_dir, exist_ok=True)
+
     super_batch_files = []
     chunks = [batch_files[i:i+BATCH_SIZE] for i in range(0, n, BATCH_SIZE)]
     total = len(chunks)
 
     for idx, chunk in enumerate(chunks):
-        super_path = os.path.join(
-            super_batch_dir, f"super_{os.path.basename(output_path).replace('.mp4', '')}_{idx:04d}.mp4"
-        )
+        super_path = os.path.join(super_batch_dir, f"part_{idx:04d}.mp4")
 
         if os.path.exists(super_path):
             local_logger.debug(f"  Super-batch {idx+1}/{total} already exists, skipping")
@@ -547,13 +560,15 @@ def _concatenate_batches(
         )
         super_batch_files.append(super_path)
 
-    # Recursively join the super-batches (will be ≤ BATCH_SIZE in almost all cases)
+    # Recursively join the super-batches, incrementing depth so the next level
+    # uses a different subdirectory and avoids the naming collision.
     local_logger.info(f"  Joining {len(super_batch_files)} super-batches...")
     _concatenate_batches(
         batch_files=super_batch_files,
         blend_seconds=blend_seconds,
         output_path=output_path,
         local_logger=local_logger,
+        _depth=_depth + 1,
     )
 
 

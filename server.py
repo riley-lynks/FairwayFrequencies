@@ -350,6 +350,7 @@ def run_pipeline():
     scene = (data.get("scene") or "").strip()
     duration = float(data.get("duration") or config.TARGET_DURATION_HOURS)
     no_ambience = bool(data.get("no_ambience") or False)
+    upload = bool(data.get("upload") or False)
     character = data.get("character") or config.INCLUDE_CHARACTER
     image_source = data.get("images") or config.IMAGE_SOURCE
     image_filename = (data.get("image_filename") or "").strip()
@@ -404,6 +405,9 @@ def run_pipeline():
 
     if image_source == "flux":
         cmd.extend(["--images", "flux"])
+
+    if not upload:
+        cmd.append("--no-upload")
 
     app.logger.info(f"Starting pipeline run {run_id}: {' '.join(cmd[:5])}...")
 
@@ -622,7 +626,7 @@ def api_status():
         },
         "ffmpeg": bool(_shutil.which("ffmpeg")),
         "image_source": config.IMAGE_SOURCE,
-        "kling_clips_dir": config.KLING_CLIPS_DIR,
+        "kling_clips_dir": config.VIDEO_CLIPS_DIR,
     })
 
 
@@ -776,11 +780,11 @@ if __name__ == "__main__":
     print(f"  Python:              {PYTHON}")
     print(f"  FFmpeg:              {'found' if __import__('shutil').which('ffmpeg') else 'NOT FOUND'}")
     print(f"\n  API Keys configured:")
-    print(f"    Anthropic:  {'✓' if config.ANTHROPIC_API_KEY else '✗ missing (prompts use local fallback)'}")
-    print(f"    BFL/Flux:   {'✓' if config.BFL_API_KEY else '- (optional)'}")
-    print(f"    Mubert:     {'✓' if config.MUBERT_API_KEY else '- (optional)'}")
-    print(f"    Freesound:  {'✓' if config.FREESOUND_API_KEY else '- (optional)'}")
-    print(f"\n  Kling clips folder: {config.KLING_CLIPS_DIR}")
+    print(f"    Anthropic:  {'OK' if config.ANTHROPIC_API_KEY else 'MISSING (prompts use local fallback)'}")
+    print(f"    BFL/Flux:   {'OK' if config.BFL_API_KEY else '- (optional)'}")
+    print(f"    Mubert:     {'OK' if config.MUBERT_API_KEY else '- (optional)'}")
+    print(f"    Freesound:  {'OK' if config.FREESOUND_API_KEY else '- (optional)'}")
+    print(f"\n  Kling clips folder: {config.VIDEO_CLIPS_DIR}")
     print(f"    (generate clips at app.klingai.com, save .mp4s here)")
     print(f"\n  Open your browser to: http://localhost:5000")
     print("=" * 60 + "\n")

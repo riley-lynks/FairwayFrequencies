@@ -124,11 +124,15 @@ function FairwayControlPanel() {
   const [includeCharacter, setIncludeCharacter] = useState("random");
   const [includeAmbience, setIncludeAmbience] = useState(true);
   const [duration, setDuration] = useState(2);
+  const [uploadToYoutube, setUploadToYoutube] = useState(true);
   const [stylize, setStylize] = useState(750);
   const [generatedPrompt, setGeneratedPrompt] = useState("");
   const [pipelineLog, setPipelineLog] = useState([]);
   const [pipelineRunning, setPipelineRunning] = useState(false);
   const [pipelineStatus, setPipelineStatus] = useState(null); // "running" | "complete" | "error"
+  const [pipelineStartTime, setPipelineStartTime] = useState(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [logExpanded, setLogExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
   const [klingPrompts, setKlingPrompts] = useState([]);   // 6 Kling animation prompts
   const [promptsLoading, setPromptsLoading] = useState(false); // waiting for server
@@ -327,6 +331,15 @@ function FairwayControlPanel() {
     }
   }, [pipelineLog]);
 
+  // Tick elapsed time every second while pipeline is running
+  useEffect(() => {
+    if (!pipelineRunning || !pipelineStartTime) return;
+    const timer = setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - pipelineStartTime) / 1000));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [pipelineRunning, pipelineStartTime]);
+
   // Clean up the polling interval if the component unmounts mid-run
   useEffect(() => {
     return () => {
@@ -501,6 +514,9 @@ function FairwayControlPanel() {
     setPipelineRunning(true);
     setPipelineStatus("running");
     setPipelineLog([]);
+    setPipelineStartTime(Date.now());
+    setElapsedSeconds(0);
+    setLogExpanded(false);
 
     // Build the arguments to pass to fairway.py.
     const args = {
@@ -509,6 +525,7 @@ function FairwayControlPanel() {
       character: includeCharacter,
       scene: prompt,
       clips_folder: selectedClipSet,     // which kling_clips subfolder to use
+      upload: uploadToYoutube,
     };
 
     let runId = null;
@@ -573,7 +590,7 @@ function FairwayControlPanel() {
       }
     }, 2000);
 
-  }, [pipelineRunning, prompt, duration, includeAmbience, includeCharacter, selectedClipSet]);
+  }, [pipelineRunning, prompt, duration, includeAmbience, includeCharacter, selectedClipSet, uploadToYoutube]);
 
   // ---------------------------------------------------------------------------
   // BUILD COMMAND PREVIEW (shown in the dark box on the Run tab)
@@ -585,6 +602,7 @@ function FairwayControlPanel() {
     if (selectedClipSet != null) parts.push(`--clips-folder "${selectedClipSet || '(root)'}"`);
     if (!includeAmbience) parts.push('--no-ambience');
     if (includeCharacter !== 'random') parts.push(`--character ${includeCharacter}`);
+    if (!uploadToYoutube) parts.push('--no-upload');
     return parts.join(' ');
   })();
 
@@ -720,7 +738,7 @@ function FairwayControlPanel() {
           {/* Settings row — Stylize shown only for Midjourney */}
           <div style={{
             display: "grid",
-            gridTemplateColumns: imageGenTool === "midjourney" ? "1fr 1fr 1fr 1fr" : "1fr 1fr 1fr",
+            gridTemplateColumns: imageGenTool === "midjourney" ? "1fr 1fr 1fr 1fr 1fr" : "1fr 1fr 1fr 1fr",
             gap: 16, marginBottom: 24,
           }}>
             <div>
@@ -755,6 +773,20 @@ function FairwayControlPanel() {
                 <option value="yes">Golf sounds</option>
                 <option value="no">Music only</option>
               </select>
+            </div>
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 600, color: "var(--color-text-secondary)" }}>YOUTUBE UPLOAD</label>
+              <div style={{
+                marginTop: 4, padding: "8px 10px", fontSize: 13, borderRadius: 6,
+                border: "1px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)",
+                display: "flex", alignItems: "center", gap: 8, cursor: "pointer", height: 37,
+              }} onClick={() => setUploadToYoutube(v => !v)}>
+                <input type="checkbox" checked={uploadToYoutube} onChange={e => setUploadToYoutube(e.target.checked)}
+                  style={{ cursor: "pointer", width: 14, height: 14, accentColor: "#2D6A4F" }} />
+                <span style={{ color: uploadToYoutube ? "var(--color-text-primary)" : "var(--color-text-tertiary)" }}>
+                  {uploadToYoutube ? "Upload & schedule" : "Skip upload"}
+                </span>
+              </div>
             </div>
             {imageGenTool === "midjourney" && (
               <div>
@@ -933,14 +965,14 @@ function FairwayControlPanel() {
           {/* Status cards */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 24 }}>
 
-            {/* KLING CLIPS card */}
+            {/* VIDEO CLIPS card */}
             <div style={{ padding: "16px", borderRadius: 10, border: `1px solid ${klingClipSets.length > 0 ? "#2D6A4F" : "var(--color-border-tertiary)"}`, background: "var(--color-background-secondary)" }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: "var(--color-text-tertiary)", letterSpacing: 0.5, marginBottom: 6 }}>KLING CLIPS</div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: "var(--color-text-tertiary)", letterSpacing: 0.5, marginBottom: 6 }}>VIDEO CLIPS</div>
               {klingClipSets.length === 0 ? (
                 <div style={{ fontSize: 13, color: "#9B2C2C", fontWeight: 600 }}>
                   No clips found
                   <div style={{ fontSize: 11, fontWeight: 400, marginTop: 2 }}>
-                    Add .mp4s to assets/kling_clips/
+                    Add .mp4s to assets/video_clips/
                   </div>
                 </div>
               ) : (
@@ -1027,46 +1059,138 @@ function FairwayControlPanel() {
             {pipelineRunning ? "Pipeline Running..." : "Run Pipeline"}
           </button>
 
-          {/* Pipeline log */}
-          {pipelineLog.length > 0 && (
-            <div style={{ marginTop: 20, borderRadius: 10, border: "1px solid var(--color-border-tertiary)", overflow: "hidden" }}>
-              <div style={{
-                padding: "12px 16px", background: "var(--color-background-secondary)",
-                borderBottom: "1px solid var(--color-border-tertiary)",
-                display: "flex", justifyContent: "space-between", alignItems: "center"
-              }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: "var(--color-text-primary)" }}>Pipeline Log</span>
+          {/* ── PIPELINE STATUS CARD (shown while running or after finish) ── */}
+          {pipelineLog.length > 0 && (() => {
+            // Derive current stage and progress from log entries
+            const stageNames = {
+              "1": "Orchestration", "2": "Video Clips", "3": "Video Assembly",
+              "4": "Music Track",   "5": "Ambient Sounds", "6": "Mix Audio",
+              "7": "Final Video",   "8": "Metadata", "9": "Thumbnail", "10": "YouTube Upload"
+            };
+            const completedNums = new Set(
+              pipelineLog.filter(l => l.done).map(l => l.stage.replace("Stage ", "").split("/")[0])
+            );
+            const lastActive = [...pipelineLog].reverse().find(l => !l.done && !l.error && l.stage !== "—");
+            const currentStageNum = lastActive ? lastActive.stage.replace("Stage ", "").split("/")[0] : null;
+            const currentStageName = stageNames[currentStageNum] || "Processing...";
+            const lastLog = pipelineLog[pipelineLog.length - 1];
+            const mins = Math.floor(elapsedSeconds / 60);
+            const secs = elapsedSeconds % 60;
+            const elapsedStr = `${mins}m ${String(secs).padStart(2, "0")}s`;
+
+            return (
+              <div style={{ marginTop: 20 }}>
+                {/* Status card */}
                 {pipelineRunning && (
-                  <span style={{ fontSize: 11, color: "#B08D57", fontWeight: 600 }}>LIVE</span>
-                )}
-              </div>
-              <div style={{ maxHeight: 400, overflowY: "auto" }}>
-                {pipelineLog.map((log, i) => (
-                  <div key={i} style={{
-                    padding: "9px 16px", fontSize: 13, display: "flex", gap: 12, alignItems: "flex-start",
-                    borderBottom: i < pipelineLog.length - 1 ? "1px solid var(--color-border-tertiary)" : "none",
-                    background: log.done ? "#D8F3DC" : log.error ? "#FFF5F5" : "transparent",
+                  <div style={{
+                    borderRadius: 10, border: "1px solid #2D6A4F",
+                    background: "#0f1f17", padding: "18px 20px", marginBottom: 12,
                   }}>
-                    <span style={{ fontSize: 11, color: "var(--color-text-tertiary)", fontFamily: "monospace", whiteSpace: "nowrap", marginTop: 1 }}>
-                      {log.time}
-                    </span>
-                    <span style={{ fontSize: 11, color: log.error ? "#9B2C2C" : "#2D6A4F", fontWeight: 600, whiteSpace: "nowrap", marginTop: 1 }}>
-                      [{log.stage}]
-                    </span>
-                    <span style={{
-                      color: log.done ? "#1B4332" : log.error ? "#9B2C2C" : "var(--color-text-primary)",
-                      fontWeight: (log.done || log.error) ? 600 : 400,
-                      wordBreak: "break-word",
-                    }}>
-                      {log.msg}
-                    </span>
+                    {/* Top row: indicator + elapsed */}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        {/* Pulsing dot */}
+                        <span style={{
+                          display: "inline-block", width: 10, height: 10, borderRadius: "50%",
+                          background: "#48BB78",
+                          boxShadow: "0 0 0 0 rgba(72,187,120,0.6)",
+                          animation: "pulse-ring 1.4s ease-out infinite",
+                        }} />
+                        <span style={{ fontSize: 12, fontWeight: 700, color: "#48BB78", letterSpacing: 1 }}>RUNNING</span>
+                      </div>
+                      <span style={{ fontSize: 13, color: "#B08D57", fontFamily: "monospace" }}>
+                        ⏱ {elapsedStr}
+                      </span>
+                    </div>
+
+                    {/* Current stage */}
+                    <div style={{ marginBottom: 14 }}>
+                      <div style={{ fontSize: 11, color: "#6B9E7A", fontWeight: 600, letterSpacing: 0.5, marginBottom: 4 }}>CURRENT STAGE</div>
+                      <div style={{ fontSize: 18, fontWeight: 700, color: "#D8F3DC" }}>
+                        {currentStageNum && `${currentStageNum}/10 — `}{currentStageName}
+                      </div>
+                    </div>
+
+                    {/* Stage progress dots */}
+                    <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+                      {[1,2,3,4,5,6,7,8,9,10].map(n => {
+                        const s = String(n);
+                        const done = completedNums.has(s);
+                        const active = s === currentStageNum;
+                        return (
+                          <div key={n} title={`${n}/10 — ${stageNames[s]}`} style={{
+                            flex: 1, height: 6, borderRadius: 3,
+                            background: done ? "#2D6A4F" : active ? "#48BB78" : "#1a3a2a",
+                            transition: "background 0.4s",
+                            boxShadow: active ? "0 0 6px rgba(72,187,120,0.7)" : "none",
+                          }} />
+                        );
+                      })}
+                    </div>
+
+                    {/* Last activity */}
+                    <div style={{ fontSize: 12, color: "#4a7a5a", borderTop: "1px solid #1a3a2a", paddingTop: 10 }}>
+                      <span style={{ color: "#6B9E7A", fontWeight: 600 }}>Last activity </span>
+                      <span style={{ fontFamily: "monospace" }}>{lastLog?.time}</span>
+                      <span style={{ color: "#D8F3DC", marginLeft: 8 }}>{lastLog?.msg}</span>
+                    </div>
                   </div>
-                ))}
-                {/* Invisible anchor for auto-scroll */}
-                <div ref={logEndRef} />
+                )}
+
+                {/* Pulse animation keyframes injected inline */}
+                <style>{`
+                  @keyframes pulse-ring {
+                    0%   { box-shadow: 0 0 0 0 rgba(72,187,120,0.6); }
+                    70%  { box-shadow: 0 0 0 8px rgba(72,187,120,0); }
+                    100% { box-shadow: 0 0 0 0 rgba(72,187,120,0); }
+                  }
+                `}</style>
+
+                {/* Full log — collapsed to last 5 lines by default */}
+                <div style={{ borderRadius: 10, border: "1px solid var(--color-border-tertiary)", overflow: "hidden" }}>
+                  <div style={{
+                    padding: "10px 16px", background: "var(--color-background-secondary)",
+                    borderBottom: "1px solid var(--color-border-tertiary)",
+                    display: "flex", justifyContent: "space-between", alignItems: "center"
+                  }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text-secondary)" }}>
+                      Pipeline Log {pipelineRunning && <span style={{ color: "#B08D57", marginLeft: 6 }}>● LIVE</span>}
+                    </span>
+                    <button onClick={() => setLogExpanded(v => !v)} style={{
+                      fontSize: 11, color: "var(--color-text-tertiary)", background: "none",
+                      border: "none", cursor: "pointer", fontFamily: "inherit", padding: "2px 6px",
+                    }}>
+                      {logExpanded ? "▲ Collapse" : `▼ Show all (${pipelineLog.length})`}
+                    </button>
+                  </div>
+                  <div style={{ maxHeight: logExpanded ? 500 : 220, overflowY: "auto" }}>
+                    {(logExpanded ? pipelineLog : pipelineLog.slice(-5)).map((log, i, arr) => (
+                      <div key={i} style={{
+                        padding: "8px 16px", fontSize: 12, display: "flex", gap: 10, alignItems: "flex-start",
+                        borderBottom: i < arr.length - 1 ? "1px solid var(--color-border-tertiary)" : "none",
+                        background: log.done ? "rgba(216,243,220,0.4)" : log.error ? "rgba(255,245,245,0.6)" : "transparent",
+                      }}>
+                        <span style={{ color: "var(--color-text-tertiary)", fontFamily: "monospace", whiteSpace: "nowrap", marginTop: 1, minWidth: 60 }}>
+                          {log.time}
+                        </span>
+                        <span style={{ color: log.error ? "#9B2C2C" : "#2D6A4F", fontWeight: 600, whiteSpace: "nowrap", marginTop: 1, minWidth: 72 }}>
+                          [{log.stage}]
+                        </span>
+                        <span style={{
+                          color: log.done ? "#1B4332" : log.error ? "#9B2C2C" : "var(--color-text-primary)",
+                          fontWeight: (log.done || log.error) ? 600 : 400,
+                          wordBreak: "break-word",
+                        }}>
+                          {log.done ? "✓ " : log.error ? "✗ " : ""}{log.msg}
+                        </span>
+                      </div>
+                    ))}
+                    <div ref={logEndRef} />
+                  </div>
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
       )}
 
