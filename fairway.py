@@ -49,9 +49,7 @@ import config
 # Import all the pipeline stage modules from the pipeline/ folder
 # Each module handles one stage of the production process
 from pipeline.orchestrator import decompose_prompt
-from pipeline.image_gen import generate_images
-from pipeline.image_import import import_midjourney_images
-from pipeline.video_import import import_kling_clips
+from pipeline.video_import import import_video_clips
 from pipeline.video_assembly import assemble_living_painting
 from pipeline.music_gen import get_music_track
 from pipeline.ambient_sounds import download_ambient_sounds
@@ -148,16 +146,6 @@ def check_requirements(args) -> bool:
         )
         all_ok = False
 
-    # Check image generation requirements based on chosen path
-    image_source = getattr(args, 'images', None) or config.IMAGE_SOURCE
-    if image_source == "flux" and not config.BFL_API_KEY:
-        issues.append(
-            "IMAGE_SOURCE is 'flux' but BFL_API_KEY is not set.\n"
-            "  Get your key at https://api.bfl.ml/\n"
-            "  Or switch to Midjourney: set IMAGE_SOURCE = 'midjourney' in config.py"
-        )
-        all_ok = False
-
     # Print all issues at once for a clean experience
     if issues:
         print("\n❌ Setup issues found. Please fix these before running:\n")
@@ -233,6 +221,59 @@ def load_scene_library() -> list:
 
 
 # =============================================================================
+# FRAME EXTRACTION — thumbnail base image from a video clip
+# =============================================================================
+def _extract_frame_from_clip(clip_path: str, run_dir: str, logger: logging.Logger) -> str:
+    """
+    Extract a single frame from the middle of a video clip to use as the
+    thumbnail base image (replaces the old Midjourney base image).
+
+    Args:
+        clip_path: Path to the source MP4 clip.
+        run_dir:   Current run directory (frame saved here).
+        logger:    Logger for progress messages.
+
+    Returns:
+        Path to the extracted PNG frame.
+    """
+    import subprocess, json as _json
+
+    output_path = os.path.join(run_dir, "base_image.png")
+
+    # Get clip duration with ffprobe
+    probe_cmd = [
+        "ffprobe", "-v", "quiet",
+        "-show_entries", "format=duration",
+        "-of", "json", clip_path,
+    ]
+    try:
+        result = subprocess.run(probe_cmd, capture_output=True, text=True, check=True,
+                                creationflags=subprocess.CREATE_NO_WINDOW)
+        duration = float(_json.loads(result.stdout)["format"]["duration"])
+    except Exception:
+        duration = 5.0  # Fallback if ffprobe fails
+
+    seek_time = duration * 0.5  # Extract from the middle of the clip
+
+    extract_cmd = [
+        "ffmpeg", "-y",
+        "-ss", str(seek_time),
+        "-i", clip_path,
+        "-vframes", "1",
+        "-q:v", "2",
+        output_path,
+    ]
+    try:
+        subprocess.run(extract_cmd, capture_output=True, text=True, check=True,
+                       creationflags=subprocess.CREATE_NO_WINDOW)
+        logger.info(f"  ✓ Thumbnail base frame extracted from: {os.path.basename(clip_path)}")
+    except subprocess.CalledProcessError as e:
+        logger.warning(f"  ⚠️ Frame extraction failed: {e.stderr[-200:]}")
+
+    return output_path
+
+
+# =============================================================================
 # INTERMEDIATE FILE CLEANUP
 # =============================================================================
 def _cleanup_intermediates(run_dir: str, logger: logging.Logger):
@@ -293,7 +334,6 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
         state:   Previously saved state (empty dict for fresh runs).
     """
     # Determine active settings — CLI args override config.py values
-    image_source = getattr(args, 'images', None) or config.IMAGE_SOURCE
     include_ambience = not getattr(args, 'no_ambience', False) and config.INCLUDE_AMBIENCE
     character_mode = getattr(args, 'character', None) or config.INCLUDE_CHARACTER
     target_hours = getattr(args, 'duration', None) or config.TARGET_DURATION_HOURS
@@ -311,11 +351,9 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
     # =========================================================================
     # STAGE 1: ORCHESTRATOR
     # =========================================================================
-    # Ask Claude to decompose the scene prompt into detailed sub-prompts for
-    # every downstream stage (image, video, music, ambient sounds, thumbnail).
     if "orchestration" not in state:
         logger.info("━" * 60)
-        logger.info("[Stage 1/11] Decomposing scene prompt with Claude...")
+        logger.info("[Stage 1/10] Decomposing scene prompt with Claude...")
         logger.info(f"  Scene: \"{prompt}\"")
 
         orchestration = decompose_prompt(
@@ -330,153 +368,43 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
         logger.info("  ✓ Orchestration complete")
         logger.debug(f"  Orchestration result: {json.dumps(orchestration, indent=2)}")
     else:
-        logger.info("[Stage 1/11] Orchestration — loaded from saved state")
+        logger.info("[Stage 1/10] Orchestration — loaded from saved state")
         orchestration = state["orchestration"]
 
-    # If --prompts-only, print the Midjourney image prompt AND all Kling
-    # animation prompts, then stop. The user copies these into each tool
-    # before running the full pipeline.
-    if getattr(args, 'prompts_only', False):
-        separator = "=" * 65
-
-        # --- STEP 1: Midjourney image prompt ---
-        print(f"\n{separator}")
-        print("  STEP 1 — MIDJOURNEY PROMPT  (generate your base image)")
-        print(f"{separator}")
-        print(f"\n  {orchestration['image_prompt']}")
-        print("\n  Parameters:  --ar 16:9 --v 7 --s 750")
-        print("\n  After generating:")
-        print("    1. Pick your favorite, upscale it (U1–U4)")
-        print("    2. Save the .png to:  assets/midjourney_images/")
-
-        # --- STEP 2: Kling animation prompts ---
-        animation_variations = orchestration.get(
-            "animation_variations", config.ANIMATION_VARIATIONS
-        )
-        base_video_prompt = orchestration.get("base_video_prompt", "")
-
-        # Extract the negative prompt (same for all clips; may come from first variation dict)
-        first_var = animation_variations[0] if animation_variations else None
-        if isinstance(first_var, dict):
-            negative_prompt = first_var.get("negative_prompt", config.DEFAULT_NEGATIVE_PROMPT)
-        else:
-            negative_prompt = config.DEFAULT_NEGATIVE_PROMPT
-
-        thin = "─" * 65
-        print(f"\n{separator}")
-        print("  STEP 2 — KLING ANIMATION PROMPTS  (generate 6 clips)")
-        print("  app.klingai.com → AI Videos → Image to Video")
-        print("  Settings: Standard mode · 5 seconds · 16:9 aspect ratio")
-        print(f"{separator}")
-
-        print(f"\n  ⚠️  NEGATIVE PROMPT — paste this into Kling's Negative Prompt field")
-        print(f"       (same for every clip — set it once, keep it for all 6):\n")
-        print(f"  {negative_prompt}\n")
-        print(f"  {thin}")
-
-        for i, variation in enumerate(
-            animation_variations[:config.NUM_ANIMATION_CLIPS], start=1
-        ):
-            if isinstance(variation, dict):
-                prompt_text = variation.get("prompt", "")
-            else:
-                # Legacy string format
-                prompt_text = (
-                    f"{base_video_prompt}. {variation}" if base_video_prompt else variation
-                )
-            print(f"\n  Clip {i} of {config.NUM_ANIMATION_CLIPS}:")
-            print(f"  {prompt_text}")
-
-        print(f"\n{separator}")
-        print("  After generating all clips:")
-        print(f"    1. Download each .mp4 to:  assets/kling_clips/")
-        print(f"    2. Run: python fairway.py \"{prompt}\"")
-        print(f"{separator}\n")
-        return
-
     # =========================================================================
-    # STAGE 2: IMAGE GENERATION
+    # STAGES 2–3 (video) and STAGES 4–5 (audio) run IN PARALLEL
     # =========================================================================
-    # Get the ONE base image that will be the visual world of this entire video.
-    if "base_image" not in state:
-        logger.info("━" * 60)
-        logger.info("[Stage 2/11] Getting base image...")
-
-        if image_source == "midjourney":
-            logger.info("  Mode: Midjourney (manual) — checking assets/midjourney_images/")
-            logger.info(f"\n  Midjourney prompt:\n  {orchestration['image_prompt']}\n")
-            specific_image = getattr(args, 'image', None)
-            if specific_image:
-                logger.info(f"  Using selected image: {specific_image}")
-            base_image_path = import_midjourney_images(
-                target_dir=run_dir,
-                image_prompt=orchestration['image_prompt'],
-                specific_filename=specific_image,
-            )
-        else:
-            logger.info("  Mode: Flux 2 (automated) — calling Black Forest Labs API")
-            base_image_path = generate_images(
-                image_prompt=orchestration['image_prompt'],
-                run_dir=run_dir,
-                api_key=config.BFL_API_KEY,
-            )
-
-        state["base_image"] = base_image_path
-        save_state(run_dir, state)
-        logger.info(f"  ✓ Base image ready: {base_image_path}")
-    else:
-        logger.info("[Stage 2/11] Base image — loaded from saved state")
-        base_image_path = state["base_image"]
-
-    # =========================================================================
-    # STAGES 3–4 (video) and STAGES 5–6 (audio) run IN PARALLEL
-    # =========================================================================
-    # WHY parallel? Video generation takes ~20 minutes (Kling API).
-    # Music generation also takes a few minutes (Mubert API).
-    # Running them at the same time saves those minutes.
-    # Python "threads" let us do two things simultaneously.
-
-    video_result = {}   # Will be filled by the video thread
-    audio_result = {}   # Will be filled by the audio thread
-    video_error = []    # Catches exceptions from the video thread
-    audio_error = []    # Catches exceptions from the audio thread
+    video_result = {}
+    audio_result = {}
+    video_error = []
+    audio_error = []
 
     def run_video_pipeline():
-        """
-        Run Stages 3 and 4: generate animation clips, then assemble them
-        into the final 2-3 hour video. Runs in its own thread.
-        """
+        """Run Stages 2 and 3: import clips, then assemble the full video."""
         try:
-            # === STAGE 3: VIDEO CLIP IMPORT ===
-            # Clips are generated manually at app.klingai.com and saved to
-            # assets/kling_clips/. This stage copies them into the run directory.
-            # Use --prompts-only first to get all the animation prompts to paste.
+            # === STAGE 2: VIDEO CLIP IMPORT ===
             if "animation_clips" not in state:
                 logger.info("━" * 60)
-                logger.info(f"[Stage 3/11] Importing Kling animation clips...")
-                logger.info(f"  Looking in: {config.KLING_CLIPS_DIR}")
+                logger.info(f"[Stage 2/10] Importing video clips...")
+                logger.info(f"  Looking in: {config.VIDEO_CLIPS_DIR}")
 
-                clip_paths = import_kling_clips(
+                clip_paths = import_video_clips(
                     clips_dir=clips_dir,
-                    base_video_prompt=orchestration["base_video_prompt"],
-                    animation_variations=orchestration["animation_variations"],
-                    num_clips=config.NUM_ANIMATION_CLIPS,
                     logger=logger,
-                    clips_ready=getattr(args, 'clips_ready', False),
                     clips_subfolder=getattr(args, 'clips_folder', None),
                 )
 
                 state["animation_clips"] = clip_paths
                 save_state(run_dir, state)
-                logger.info(f"  ✓ {len(clip_paths)} animation clips ready")
+                logger.info(f"  ✓ {len(clip_paths)} clips ready")
             else:
-                logger.info("[Stage 3/11] Animation clips — loaded from saved state")
+                logger.info("[Stage 2/10] Video clips — loaded from saved state")
                 clip_paths = state["animation_clips"]
 
-            # === STAGE 4: VIDEO ASSEMBLY ===
+            # === STAGE 3: VIDEO ASSEMBLY ===
             if "assembled_video" not in state:
                 logger.info("━" * 60)
-                logger.info("[Stage 4/11] Assembling living painting (seamless loop)...")
+                logger.info("[Stage 3/10] Assembling living painting (seamless loop)...")
                 logger.info(f"  Target duration: {target_hours} hours")
                 logger.info(f"  Loop blend: {config.LOOP_BLEND_SECONDS}s crossfades between clips")
 
@@ -493,10 +421,11 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
                 save_state(run_dir, state)
                 logger.info(f"  ✓ Video assembled: {assembled_video_path}")
             else:
-                logger.info("[Stage 4/11] Assembled video — loaded from saved state")
+                logger.info("[Stage 3/10] Assembled video — loaded from saved state")
                 assembled_video_path = state["assembled_video"]
 
             video_result["path"] = assembled_video_path
+            video_result["clips"] = clip_paths
 
         except Exception as e:
             video_error.append(e)
@@ -504,15 +433,12 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
             raise
 
     def run_audio_pipeline():
-        """
-        Run Stages 5 and 6: get music track and ambient sounds (if enabled).
-        Runs in its own thread, parallel to video generation.
-        """
+        """Run Stages 4 and 5: get music track and ambient sounds."""
         try:
-            # === STAGE 5: MUSIC GENERATION ===
+            # === STAGE 4: MUSIC GENERATION ===
             if "music_track" not in state:
                 logger.info("━" * 60)
-                logger.info("[Stage 5/11] Getting LoFi music track...")
+                logger.info("[Stage 4/10] Getting LoFi music track...")
 
                 music_path = get_music_track(
                     music_prompt=orchestration["music_prompt"],
@@ -526,15 +452,15 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
                 save_state(run_dir, state)
                 logger.info(f"  ✓ Music ready: {music_path}")
             else:
-                logger.info("[Stage 5/11] Music track — loaded from saved state")
+                logger.info("[Stage 4/10] Music track — loaded from saved state")
                 music_path = state["music_track"]
 
-            # === STAGE 6: AMBIENT SOUNDS ===
+            # === STAGE 5: AMBIENT SOUNDS ===
             ambient_path = None
             if include_ambience:
                 if "ambient_sounds" not in state:
                     logger.info("━" * 60)
-                    logger.info("[Stage 6/11] Downloading ambient golf course sounds...")
+                    logger.info("[Stage 5/10] Downloading ambient golf course sounds...")
 
                     ambient_path = download_ambient_sounds(
                         keywords=orchestration["ambience_keywords"],
@@ -548,10 +474,10 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
                     save_state(run_dir, state)
                     logger.info(f"  ✓ Ambient sounds ready: {ambient_path}")
                 else:
-                    logger.info("[Stage 6/11] Ambient sounds — loaded from saved state")
+                    logger.info("[Stage 5/10] Ambient sounds — loaded from saved state")
                     ambient_path = state["ambient_sounds"]
             else:
-                logger.info("[Stage 6/11] Ambient sounds — skipped (--no-ambience or disabled in config)")
+                logger.info("[Stage 5/10] Ambient sounds — skipped (--no-ambience or disabled in config)")
 
             audio_result["music"] = music_path
             audio_result["ambient"] = ambient_path
@@ -583,15 +509,26 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
         sys.exit(1)
 
     assembled_video_path = video_result["path"]
+    clip_paths = video_result["clips"]
     music_path = audio_result["music"]
     ambient_path = audio_result.get("ambient")
 
     # =========================================================================
-    # STAGE 7: AUDIO ASSEMBLY
+    # FRAME EXTRACTION — thumbnail base image from the first video clip
+    # =========================================================================
+    if "base_image" not in state:
+        base_image_path = _extract_frame_from_clip(clip_paths[0], run_dir, logger)
+        state["base_image"] = base_image_path
+        save_state(run_dir, state)
+    else:
+        base_image_path = state["base_image"]
+
+    # =========================================================================
+    # STAGE 6: AUDIO ASSEMBLY
     # =========================================================================
     if "mixed_audio" not in state:
         logger.info("━" * 60)
-        logger.info("[Stage 7/11] Mixing music and ambient sounds...")
+        logger.info("[Stage 6/10] Mixing music and ambient sounds...")
 
         mixed_audio_path = assemble_audio(
             music_path=music_path,
@@ -607,7 +544,7 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
         save_state(run_dir, state)
         logger.info(f"  ✓ Mixed audio ready: {mixed_audio_path}")
     else:
-        logger.info("[Stage 7/11] Mixed audio — loaded from saved state")
+        logger.info("[Stage 6/10] Mixed audio — loaded from saved state")
         mixed_audio_path = state["mixed_audio"]
 
     # =========================================================================
@@ -615,7 +552,7 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
     # =========================================================================
     if "final_video" not in state:
         logger.info("━" * 60)
-        logger.info("[Stage 8/11] Rendering final video (merging video + audio)...")
+        logger.info("[Stage 7/10] Rendering final video (merging video + audio)...")
 
         # Build output filename: channel_name_scene_timestamp.mp4
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -636,7 +573,7 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
         logger.info(f"  ✓ Final video: {final_video_path}")
         _cleanup_intermediates(run_dir, logger)
     else:
-        logger.info("[Stage 8/11] Final video — loaded from saved state")
+        logger.info("[Stage 7/10] Final video — loaded from saved state")
         final_video_path = state["final_video"]
 
     # =========================================================================
@@ -644,7 +581,7 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
     # =========================================================================
     if "metadata" not in state:
         logger.info("━" * 60)
-        logger.info("[Stage 9/11] Generating YouTube title, description, and tags...")
+        logger.info("[Stage 8/10] Generating YouTube title, description, and tags...")
 
         metadata = generate_metadata(
             scene_prompt=prompt,
@@ -664,7 +601,7 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
         save_state(run_dir, state)
         logger.info(f"  ✓ Metadata saved: {metadata_path}")
     else:
-        logger.info("[Stage 9/11] Metadata — loaded from saved state")
+        logger.info("[Stage 8/10] Metadata — loaded from saved state")
         metadata = state["metadata"]
 
     # =========================================================================
@@ -672,7 +609,7 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
     # =========================================================================
     if "thumbnail" not in state:
         logger.info("━" * 60)
-        logger.info("[Stage 10/11] Generating thumbnail image...")
+        logger.info("[Stage 9/10] Generating thumbnail image...")
 
         thumbnail_path = generate_thumbnail(
             base_image_path=base_image_path,
@@ -690,7 +627,7 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
         save_state(run_dir, state)
         logger.info(f"  ✓ Thumbnail: {thumbnail_path}")
     else:
-        logger.info("[Stage 10/11] Thumbnail — loaded from saved state")
+        logger.info("[Stage 9/10] Thumbnail — loaded from saved state")
         thumbnail_path = state["thumbnail"]
 
     # =========================================================================
@@ -698,7 +635,7 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
     # =========================================================================
     if getattr(args, 'upload', False):
         logger.info("━" * 60)
-        logger.info("[Stage 11/11] Uploading to YouTube (unlisted)...")
+        logger.info("[Stage 10/10] Uploading to YouTube (unlisted)...")
 
         upload_to_youtube(
             video_path=final_video_path,
@@ -710,7 +647,7 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
         )
         logger.info("  ✓ Upload complete")
     else:
-        logger.info("[Stage 11/11] YouTube upload — skipped (add --upload to enable)")
+        logger.info("[Stage 10/10] YouTube upload — skipped (add --upload to enable)")
 
     # =========================================================================
     # SUMMARY
@@ -748,11 +685,11 @@ def parse_args():
         prog="fairway",
         description=(
             "Fairway Frequencies — AI-Automated LoFi Golf YouTube Channel\n"
-            "Generates 2–3 hour living painting videos from a single scene prompt.\n"
+            "Generates 2–3 hour living painting videos from your video clips.\n"
             "\nExamples:\n"
             "  python fairway.py \"Misty dawn, links course, coastal cliffs\"\n"
+            "  python fairway.py \"scene\" --clips-folder my_veo_clips\n"
             "  python fairway.py --random --duration 3.0\n"
-            "  python fairway.py --prompts-only \"Cherry blossom Japanese course\"\n"
             "  python fairway.py --test"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter
@@ -789,22 +726,6 @@ def parse_args():
         help="Whether to include a foreground character figure (default: from config.py)"
     )
 
-    # Image source override
-    parser.add_argument(
-        "--images",
-        choices=["midjourney", "flux"],
-        default=None,
-        help="Image generation method: 'midjourney' (manual) or 'flux' (automated)"
-    )
-
-    # Specific image filename to use (instead of auto-selecting most recent)
-    parser.add_argument(
-        "--image",
-        metavar="FILENAME",
-        default=None,
-        help="Exact filename in assets/midjourney_images/ to use as the base image"
-    )
-
     # YouTube upload
     parser.add_argument(
         "--upload",
@@ -826,28 +747,13 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--prompts-only",
-        action="store_true",
-        help="Print the Midjourney image prompt and all Kling animation prompts, then exit"
-    )
-
-    parser.add_argument(
         "--clips-folder",
         metavar="FOLDER",
         default=None,
         help=(
-            "Named subfolder inside assets/kling_clips/ to use for this run. "
-            "E.g. --clips-folder misty_dawn uses assets/kling_clips/misty_dawn/. "
-            "If omitted, clips are read from the root folder (backward compatible)."
-        )
-    )
-
-    parser.add_argument(
-        "--clips-ready",
-        action="store_true",
-        help=(
-            "Skip straight to video assembly — assumes clips are already "
-            "in assets/kling_clips/ (lowers minimum from 3 to 1)"
+            "Named subfolder inside assets/video_clips/ to use for this run. "
+            "E.g. --clips-folder my_veo_clips uses assets/video_clips/my_veo_clips/. "
+            "If omitted, clips are read from the root folder."
         )
     )
 

@@ -128,22 +128,17 @@ VIDEO_FPS = 30                   # Frames per second — smooth without being to
 VIDEO_BITRATE = "10M"            # Output video bitrate. 8M–12M is good for YouTube.
 
 # =============================================================================
-# KLING CLIPS — Manual Web Workflow
+# VIDEO CLIPS — Manual Workflow
 # =============================================================================
-# Clips are generated manually at app.klingai.com (no API key needed).
-# The pipeline reads finished clips from this folder and copies them into
-# each run's working directory for assembly.
+# Generate clips externally (Veo, Kling, Runway, Pika, etc.) and drop them
+# into this folder. The pipeline reads them and assembles the final video.
 #
 # WORKFLOW:
-#   1. Run: python fairway.py --prompts-only "scene"  → get all prompts
-#   2. Generate image in Midjourney → save to assets/midjourney_images/
-#   3. Go to app.klingai.com → AI Videos → Image to Video
-#      Upload image, paste each animation prompt, generate clip
-#      Settings: Standard mode · 5 seconds · 16:9 aspect ratio
-#   4. Download each clip → save to KLING_CLIPS_DIR below
-#   5. Run: python fairway.py "scene"  → pipeline assembles everything
+#   1. Generate your clips in your preferred tool (Veo, Kling, etc.)
+#   2. Save them to a named subfolder: assets/video_clips/my_scene/
+#   3. Run: python fairway.py "scene description" --clips-folder my_scene
 
-KLING_CLIPS_DIR = "./assets/kling_clips/"  # Where you save downloaded Kling clips
+VIDEO_CLIPS_DIR = "./assets/video_clips/"  # Where you save your generated clips
 
 # =============================================================================
 # ANIMATION CLIPS — v3 Living Painting System

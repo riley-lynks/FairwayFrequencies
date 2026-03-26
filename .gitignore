@@ -16,8 +16,8 @@ assets/music/*
 !assets/music/.gitkeep
 assets/sounds/*
 !assets/sounds/.gitkeep
-assets/kling_clips/*
-!assets/kling_clips/.gitkeep
+assets/video_clips/*
+!assets/video_clips/.gitkeep
 
 # Python virtual environment
 venv/
