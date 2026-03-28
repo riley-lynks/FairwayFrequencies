@@ -602,9 +602,22 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
         with open(metadata_path, "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=2, ensure_ascii=False)
 
+        # Save metadata as plain text for easy copy/paste
+        txt_path = final_video_path.replace(".mp4", "_metadata.txt")
+        tags_line = ", ".join(metadata.get("tags", []))
+        txt_content = (
+            f"TITLE:\n{metadata.get('title', '')}\n\n"
+            f"DESCRIPTION:\n{metadata.get('description', '')}\n\n"
+            f"TAGS:\n{tags_line}\n\n"
+            f"THUMBNAIL TEXT:\n{metadata.get('thumbnail_text', '')}\n"
+        )
+        with open(txt_path, "w", encoding="utf-8") as f:
+            f.write(txt_content)
+
         state["metadata"] = metadata
         save_state(run_dir, state)
         logger.info(f"  ✓ Metadata saved: {metadata_path}")
+        logger.info(f"  ✓ Plain text:     {txt_path}")
     else:
         logger.info("[Stage 8/10] Metadata — loaded from saved state")
         metadata = state["metadata"]

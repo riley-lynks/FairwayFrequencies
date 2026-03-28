@@ -220,22 +220,20 @@ def _fallback_chapter_names(count: int, mood: str = "calm") -> list[str]:
 def _build_fallback_metadata(scene_prompt, mood, time_of_day, season, has_character,
                               duration_hours: float = 2.0) -> dict:
     """Build fallback metadata without Claude if the API fails."""
-    char_note = " • featuring our signature golfer" if has_character else ""
     stamps = _chapter_timestamps(duration_hours)
     base_desc = (
-        f"Step onto the course and let the music carry you. "
-        f"A {mood} {time_of_day} at a beautiful golf course{char_note}, "
-        f"animated in our signature anime/Ghibli art style.\n\n"
-        "✦ 2+ Hours of LoFi Golf Ambience\n"
-        "✦ No ads mid-video\n"
-        "✦ Perfect for studying, working, or relaxing\n\n"
-        "#lofi #golf #studymusic #chillmusic #relax\n\n"
-        "Fairway Frequencies — Where Golf Meets LoFi\n"
-        "Subscribe for new living painting videos every week. ⛳"
+        "Welcome to Fairway Frequencies — lofi beats and ambient sounds from the world's most peaceful golf courses.\n\n"
+        f"A {mood} {time_of_day} scene at a beautiful golf course, animated in a Studio Ghibli-inspired watercolor style. "
+        f"Pure lofi hip hop and ambient sounds for studying, deep focus, and relaxing — no interruptions, just the course.\n\n"
+        "Perfect for studying, working, relaxing, or falling asleep.\n\n"
+        "🎵 Music: Original lofi instrumentals\n"
+        "🎨 Art: Studio Ghibli-inspired animated watercolor\n\n"
+        "New scenes every week. Subscribe for more peaceful golf course vibes.\n\n"
+        "#lofi #studymusic #ambientmusic #chillbeats #golfvibes"
     )
     description = _append_chapters(base_desc, stamps, _fallback_chapter_names(len(stamps), mood))
     return {
-        "title": f"Fairway Frequencies — {scene_prompt[:45]} | LoFi Golf ⛳",
+        "title": f"{time_of_day.title()} Golf Course | {mood.title()} Lofi Beats | {int(duration_hours)} Hours ⛳",
         "description": description,
         "tags": [
             "lofi", "golf", "lofi golf", "study music", "chill music",
@@ -267,10 +265,19 @@ Output ONLY valid JSON with these fields:
   "tags": ["array", "of", "20-30", "tags"]
 }
 
-Title formula: "Fairway Frequencies — [Scene] | [Mood keyword] Golf [Genre] ⛳"
+Title formula: "[Mood/Time] + [Golf Element] + [LoFi Keyword] + [Duration] ⛳"
 Examples:
-  "Fairway Frequencies — Misty Dawn Links Course | Chill Golf LoFi ⛳"
-  "Fairway Frequencies — Cherry Blossom Golf Course | Peaceful Study Music ⛳"
+  "Misty Morning Golf Course | Chill Lofi Beats | 2 Hours ⛳"
+  "Golden Hour Fairway | Study Music Lofi | 2 Hours ⛳"
+  "Moonlit Links Course | Dreamy Lofi Hip Hop | 3 Hours ⛳"
+
+Description structure:
+  Line 1 (fixed): "Welcome to Fairway Frequencies — lofi beats and ambient sounds from the world's most peaceful golf courses."
+  Line 2: Unique 2-3 sentence scene description with keywords woven in naturally.
+  Line 3 (fixed): "Perfect for studying, working, relaxing, or falling asleep."
+  Lines 4-5 (fixed): "🎵 Music: Original lofi instrumentals\\n🎨 Art: Studio Ghibli-inspired animated watercolor"
+  Line 6 (fixed): "New scenes every week. Subscribe for more peaceful golf course vibes."
+  Hashtags: #lofi #studymusic #ambientmusic #chillbeats #golfvibes + 3-5 scene-specific ones.
 
 Tags should include: lofi, golf, lofi golf, study music, chill music, the scene keywords,
 anime, ghibli, and long-tail variations that golfers and study-music fans would search for."""

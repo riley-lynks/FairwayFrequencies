@@ -12,35 +12,46 @@ Respond ONLY with valid JSON. No markdown, no explanation, just the JSON object.
 TITLE RULES:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 - Under 70 characters (longer titles get cut off in search)
-- Include the channel name "Fairway Frequencies" (brand recognition)
 - Include at least one keyword from: lofi, lo-fi, chill, study music, golf
 - Use the golf emoji ⛳ at the end (brand consistency)
-- Include the scene's most evocative visual detail (from the image)
-- Pattern: "Fairway Frequencies — [Scene] | [Mood/Genre] ⛳"
+- Pattern: "[Mood/Time] + [Golf Element] + [LoFi Keyword] + [Duration] ⛳"
+  - Mood/Time: evocative adjective or time of day from the image (e.g. "Misty Morning", "Golden Hour", "Moonlit", "Rainy Afternoon")
+  - Golf Element: specific golf scene detail (e.g. "Golf Course", "Fairway", "Links Course", "Putting Green")
+  - LoFi Keyword: the search term that fits the mood (e.g. "Lofi Beats", "Chill Lofi", "Study Music", "Lofi Hip Hop")
+  - Duration: video length (e.g. "2 Hours", "3 Hours")
 
 Example good titles:
-  "Fairway Frequencies — Misty Dawn Links Course | Chill LoFi Golf ⛳"
-  "Fairway Frequencies — Cherry Blossom Golf & Rain | Study Music ⛳"
-  "Fairway Frequencies — Moonlit Fairway | Dreamy LoFi Golf ⛳"
+  "Misty Morning Golf Course | Chill Lofi Beats | 2 Hours ⛳"
+  "Golden Hour Fairway | Study Music Lofi | 2 Hours ⛳"
+  "Moonlit Links Course | Dreamy Lofi Hip Hop | 3 Hours ⛳"
+  "Rainy Afternoon Putting Green | Lofi Beats | 2 Hours ⛳"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 DESCRIPTION RULES:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-- First 2 lines MUST hook the viewer — describe what is literally visible in the image (colors, light, landscape, atmosphere). These show before "...show more" and must make someone stop scrolling.
-- The body of the description must naturally weave in high-search keyword phrases. Do NOT just list them — work them into readable sentences. Required phrases to include somewhere in the body:
-    lofi hip hop | study music | chill music | focus music | relaxing music | golf course | lo-fi beats | background music for studying | work from home music | anime aesthetic
-- Include 2-3 hours duration info
-- Include channel subscribe CTA
-- Use emoji sparingly (2-3 max, not every line)
-- Include 8-10 hashtags at the end (more than before — hashtags drive discovery)
-- Total length: 500-900 characters
+Follow this exact structure — do not deviate from the order or fixed lines:
 
-Description structure:
-Line 1-2: Vivid scene-setting hook based on what's IN THE IMAGE (lighting, colors, landscape)
-Line 3-4: What this video is — lofi hip hop / study music / relaxing golf course ambience, duration, use case
-Bullet points: Key features (no ads mid-video, perfect for studying / work from home / deep focus)
-Hashtags: 8-10 relevant ones including scene-specific ones
-Sign-off: Channel tagline + subscribe note
+LINE 1 (fixed): "Welcome to Fairway Frequencies — lofi beats and ambient sounds from the world's most peaceful golf courses."
+
+LINE 2 (scene description): A unique 2-3 sentence description of this specific scene and mood, based on what you literally see in the image (colors, lighting, landscape, atmosphere). Make it evocative and specific — not generic. This is where searchable keyword phrases should be woven in naturally: lofi hip hop | study music | chill music | focus music | relaxing music | golf course | lo-fi beats | background music | anime aesthetic
+
+LINE 3 (fixed): "Perfect for studying, working, relaxing, or falling asleep."
+
+LINE 4 (fixed emoji lines):
+🎵 Music: Original lofi instrumentals
+🎨 Art: Studio Ghibli-inspired animated watercolor
+
+LINE 5 (fixed CTA): "New scenes every week. Subscribe for more peaceful golf course vibes."
+
+LINE 6 (timestamps — generated separately by the chapter system, do NOT include in this field)
+
+LINE 7 (hashtags): 8-10 hashtags. Always include: #lofi #studymusic #ambientmusic #chillbeats #golfvibes. Add 3-5 scene-specific ones.
+
+Rules:
+- Use the fixed lines EXACTLY as written above — do not paraphrase them
+- The scene description (Line 2) is the only creative/variable part
+- No extra bullet points or feature lists
+- Total length: 400-700 characters
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 TAG RULES:
