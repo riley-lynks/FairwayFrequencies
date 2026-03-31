@@ -349,6 +349,18 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
     os.makedirs(norm_dir, exist_ok=True)
     os.makedirs(audio_dir, exist_ok=True)
 
+    # Output directory — scoped to the clip folder when one is specified.
+    # E.g. --clips-folder Video_6 → all outputs land in output/Video_6/
+    # This keeps finished videos, metadata, thumbnails, and Shorts for each
+    # scene together in one place rather than mixed in the root output/ folder.
+    clips_folder_name = getattr(args, 'clips_folder', None)
+    run_output_dir = (
+        os.path.join(config.OUTPUT_DIR, clips_folder_name)
+        if clips_folder_name
+        else config.OUTPUT_DIR
+    )
+    os.makedirs(run_output_dir, exist_ok=True)
+
     start_time = time.time()
 
     # =========================================================================
@@ -626,8 +638,8 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
             safe_prompt = "".join(c if c.isalnum() or c == "_" else "_" for c in prompt[:30])
             genre_suffix = f"_{genre_lower}" if genre else ""
             output_filename = f"fairway_{safe_prompt}_{timestamp}{genre_suffix}.mp4"
-            output_path = os.path.join(config.OUTPUT_DIR, output_filename)
-            os.makedirs(config.OUTPUT_DIR, exist_ok=True)
+            output_path = os.path.join(run_output_dir, output_filename)
+            os.makedirs(run_output_dir, exist_ok=True)
 
             final_video_path = render_final_video(
                 video_path=assembled_video_path,
@@ -695,7 +707,7 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
                 thumbnail_prompt=orchestration.get("thumbnail_prompt", orchestration["image_prompt"]),
                 image_source=image_source,
                 run_dir=run_dir,
-                output_dir=config.OUTPUT_DIR,
+                output_dir=run_output_dir,
                 final_video_path=final_video_path,
                 api_key=config.BFL_API_KEY,
                 metadata=metadata,
@@ -742,6 +754,7 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
                     run_dir=run_dir,
                     boundaries_path=gstate.get("song_boundaries"),
                     metadata=metadata,
+                    output_dir=run_output_dir,
                     logger=logger,
                 )
 

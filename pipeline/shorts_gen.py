@@ -129,6 +129,7 @@ def generate_shorts(
     run_dir: str,
     boundaries_path: str,
     metadata: dict,
+    output_dir: str = None,
     logger: logging.Logger = None,
 ) -> dict:
     """
@@ -142,6 +143,8 @@ def generate_shorts(
         run_dir:          The run directory (for finding song_boundaries.json).
         boundaries_path:  Path to song_boundaries.json (or None for auto-detect).
         metadata:         The video's metadata dict (title, tags, etc.).
+        output_dir:       Base output directory. Shorts go in a "shorts" subfolder
+                          inside this dir. Defaults to config.OUTPUT_DIR.
         logger:           Logger for progress messages.
 
     Returns:
@@ -151,7 +154,8 @@ def generate_shorts(
 
     # Create the output directory for this video's Shorts
     video_stem = os.path.splitext(os.path.basename(final_video_path))[0]
-    output_dir = os.path.join(config.OUTPUT_DIR, "shorts", video_stem)
+    base_dir = output_dir if output_dir else config.OUTPUT_DIR
+    output_dir = os.path.join(base_dir, "shorts", video_stem)
     os.makedirs(output_dir, exist_ok=True)
 
     local_logger.info(f"  Output: {output_dir}")
