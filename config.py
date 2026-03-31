@@ -307,3 +307,18 @@ GOLFQUILIZER_BALL_BLACK = os.path.join("assets", "golfquilizer", "golf_ball_blac
 # These thresholds tell FFmpeg what counts as "quiet" between songs.
 SILENCE_THRESHOLD_DB = -35      # Audio below this dB level = "silence"
 SILENCE_MIN_DURATION = 0.8      # Minimum seconds of quiet to count as a boundary
+
+# =============================================================================
+# A/B TESTING — Music Genre Comparison
+# =============================================================================
+# When --ab-test is passed to fairway.py, the pipeline generates TWO videos
+# from the same visual content — one per genre below. Each gets its own music
+# track, title (with genre called out), thumbnail, and Shorts set.
+#
+# Folder names must exactly match subfolders inside assets/music/.
+# E.g., "Jazz" → assets/music/Jazz/   "HipHop" → assets/music/HipHop/
+#
+# WHY A/B test? YouTube analytics will show which genre drives more watch time,
+# subscribers, and Shorts engagement. Use that data to focus the channel.
+
+AB_TEST_GENRES = ["Jazz", "HipHop"]

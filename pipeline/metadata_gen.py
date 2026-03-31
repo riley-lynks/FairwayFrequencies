@@ -68,6 +68,7 @@ def generate_metadata(
     claude_model: str,
     duration_hours: float = 2.0,
     image_path: str = None,
+    genre: str = None,
     logger: logging.Logger = None,
 ) -> dict:
     """
@@ -79,6 +80,8 @@ def generate_metadata(
         api_key:        Anthropic API key.
         claude_model:   Claude model identifier.
         image_path:     Path to the selected base image (used for vision-based description).
+        genre:          Music genre for this video (e.g. "Jazz", "HipHop"). When set,
+                        Claude includes the genre in the title and thumbnail_text.
         logger:         Logger for progress messages.
 
     Returns:
@@ -102,6 +105,16 @@ def generate_metadata(
     except FileNotFoundError:
         system_prompt = _get_inline_metadata_prompt()
 
+    # Map raw genre keys to human-readable display names for Claude
+    _GENRE_DISPLAY = {"jazz": "Jazz", "hiphop": "Hip-Hop", "hip-hop": "Hip-Hop"}
+    genre_display = _GENRE_DISPLAY.get(genre.lower(), genre) if genre else None
+    genre_line = (
+        f"\nMusic genre: {genre_display} — "
+        "include the genre name prominently in both the title and thumbnail_text. "
+        f"Title example pattern: '... | {genre_display} Lofi | ...' "
+        f"thumbnail_text example: '{genre_display.upper()} LOFI'"
+    ) if genre_display else ""
+
     user_message = f"""Scene prompt: "{scene_prompt}"
 Mood: {mood}
 Time of day: {time_of_day}
@@ -109,7 +122,7 @@ Season: {season}
 Has character: {has_character}
 Video duration: {duration_hours} hours
 Chapter timestamps: {timestamps_str}
-Channel name: Fairway Frequencies
+Channel name: Fairway Frequencies{genre_line}
 
 The image attached is the exact frame used in this video — base the description on what you actually see in it, not on the prompt text.
 {f'Note: {character_note}.' if character_note else ''}
@@ -193,14 +206,14 @@ Remember:
         except json.JSONDecodeError:
             # Claude returned non-JSON — build a fallback
             local_logger.warning("  ⚠️ Claude returned non-JSON metadata, using fallback")
-            return _build_fallback_metadata(scene_prompt, mood, time_of_day, season, has_character, duration_hours)
+            return _build_fallback_metadata(scene_prompt, mood, time_of_day, season, has_character, duration_hours, genre_display)
 
         except Exception as e:
             local_logger.warning(f"  ⚠️ Metadata attempt {attempt+1} failed: {e}")
             if attempt < config.MAX_RETRIES - 1:
                 time.sleep(config.RETRY_BASE_DELAY * (2 ** attempt))
 
-    return _build_fallback_metadata(scene_prompt, mood, time_of_day, season, has_character, duration_hours)
+    return _build_fallback_metadata(scene_prompt, mood, time_of_day, season, has_character, duration_hours, genre_display)
 
 
 def _fallback_chapter_names(count: int, mood: str = "calm") -> list[str]:
@@ -218,13 +231,14 @@ def _fallback_chapter_names(count: int, mood: str = "calm") -> list[str]:
 
 
 def _build_fallback_metadata(scene_prompt, mood, time_of_day, season, has_character,
-                              duration_hours: float = 2.0) -> dict:
+                              duration_hours: float = 2.0, genre_display: str = None) -> dict:
     """Build fallback metadata without Claude if the API fails."""
     stamps = _chapter_timestamps(duration_hours)
+    genre_phrase = f" {genre_display}" if genre_display else " Hip Hop"
     base_desc = (
         "Welcome to Fairway Frequencies — lofi beats and ambient sounds from the world's most peaceful golf courses.\n\n"
         f"A {mood} {time_of_day} scene at a beautiful golf course, animated in a Studio Ghibli-inspired watercolor style. "
-        f"Pure lofi hip hop and ambient sounds for studying, deep focus, and relaxing — no interruptions, just the course.\n\n"
+        f"Pure lofi{genre_phrase} and ambient sounds for studying, deep focus, and relaxing — no interruptions, just the course.\n\n"
         "Perfect for studying, working, relaxing, or falling asleep.\n\n"
         "🎵 Music: Original lofi instrumentals\n"
         "🎨 Art: Studio Ghibli-inspired animated watercolor\n\n"
@@ -232,8 +246,11 @@ def _build_fallback_metadata(scene_prompt, mood, time_of_day, season, has_charac
         "#lofi #studymusic #ambientmusic #chillbeats #golfvibes"
     )
     description = _append_chapters(base_desc, stamps, _fallback_chapter_names(len(stamps), mood))
+    genre_title = f" | {genre_display} Lofi" if genre_display else " Lofi Beats"
+    thumbnail_text = f"{genre_display.upper()} LOFI" if genre_display else "STUDY MUSIC"
     return {
-        "title": f"{time_of_day.title()} Golf Course | {mood.title()} Lofi Beats | {int(duration_hours)} Hours ⛳",
+        "title": f"{time_of_day.title()} Golf Course{genre_title} | {int(duration_hours)} Hours ⛳",
+        "thumbnail_text": thumbnail_text,
         "description": description,
         "tags": [
             "lofi", "golf", "lofi golf", "study music", "chill music",

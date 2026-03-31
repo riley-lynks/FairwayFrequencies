@@ -64,6 +64,7 @@ def get_music_track(
     target_duration_hours: float,
     audio_dir: str,
     api_key: str,
+    genre: str = None,
     logger: logging.Logger = None,
 ) -> tuple:
     """
@@ -77,6 +78,9 @@ def get_music_track(
         target_duration_hours: How long the video is (we need music this long).
         audio_dir:            Directory to save the processed music file.
         api_key:              Mubert API key (used only if local library is empty).
+        genre:                Genre subfolder name (e.g. "Jazz", "HipHop"). When
+                              set, only tracks from assets/music/{genre}/ are used.
+                              None = use all tracks across all subfolders.
         logger:               Logger for progress messages.
 
     Returns:
@@ -92,10 +96,11 @@ def get_music_track(
     target_seconds = target_duration_hours * 3600
 
     # Try local library first
-    library_tracks = _find_library_tracks()
+    library_tracks = _find_library_tracks(genre)
 
     if library_tracks:
-        local_logger.info(f"  Found {len(library_tracks)} tracks in local library.")
+        genre_note = f" ({genre})" if genre else ""
+        local_logger.info(f"  Found {len(library_tracks)} tracks in local library{genre_note}.")
         output_path = os.path.join(audio_dir, "music_looped.wav")
 
         if len(library_tracks) == 1:
@@ -163,20 +168,50 @@ def get_music_track(
     return mubert_path, None  # No song boundaries for single Mubert track
 
 
-def _find_library_tracks() -> list:
+def _find_library_tracks(genre: str = None) -> list:
     """
     Find all audio tracks in the local music library directory.
 
+    Args:
+        genre: Optional subfolder name (e.g. "Jazz", "HipHop"). When provided,
+               only tracks from assets/music/{genre}/ are returned (case-insensitive
+               folder match). When None, all tracks across all subdirectories are
+               returned.
+
     Returns:
-        List of file paths to audio files in assets/music/.
+        List of file paths to audio files found.
     """
     if not os.path.exists(MUSIC_LIBRARY_DIR):
         return []
 
+    if genre:
+        # Find the matching subfolder (case-insensitive)
+        search_dir = None
+        try:
+            for entry in os.scandir(MUSIC_LIBRARY_DIR):
+                if entry.is_dir() and entry.name.lower() == genre.lower():
+                    search_dir = entry.path
+                    break
+        except OSError:
+            return []
+        if not search_dir:
+            return []
+        search_dirs = [search_dir]
+    else:
+        # Root + all immediate subdirectories
+        search_dirs = [MUSIC_LIBRARY_DIR]
+        try:
+            for entry in os.scandir(MUSIC_LIBRARY_DIR):
+                if entry.is_dir():
+                    search_dirs.append(entry.path)
+        except OSError:
+            pass
+
     found = []
-    for ext in SUPPORTED_FORMATS:
-        found.extend(glob.glob(os.path.join(MUSIC_LIBRARY_DIR, f"*{ext}")))
-        found.extend(glob.glob(os.path.join(MUSIC_LIBRARY_DIR, f"*{ext.upper()}")))
+    for search_dir in search_dirs:
+        for ext in SUPPORTED_FORMATS:
+            found.extend(glob.glob(os.path.join(search_dir, f"*{ext}")))
+            found.extend(glob.glob(os.path.join(search_dir, f"*{ext.upper()}")))
 
     # Filter out the .gitkeep placeholder
     found = [f for f in found if not f.endswith(".gitkeep")]

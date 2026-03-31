@@ -440,27 +440,33 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
     def run_audio_pipeline():
         """Run Stages 4 and 5: get music track and ambient sounds."""
         try:
+            ab_test = getattr(args, 'ab_test', False)
+
             # === STAGE 4: MUSIC GENERATION ===
-            if "music_track" not in state:
-                logger.info("━" * 60)
-                logger.info("[Stage 4/10] Getting LoFi music track...")
+            # In AB test mode this is skipped here and run per-genre after the
+            # threads join, so each genre gets its own music track in isolation.
+            if not ab_test:
+                if "music_track" not in state:
+                    logger.info("━" * 60)
+                    logger.info("[Stage 4/10] Getting LoFi music track...")
 
-                music_path, boundaries_path = get_music_track(
-                    music_prompt=orchestration["music_prompt"],
-                    target_duration_hours=target_hours,
-                    audio_dir=audio_dir,
-                    api_key=config.MUBERT_API_KEY,
-                    logger=logger,
-                )
+                    music_path, boundaries_path = get_music_track(
+                        music_prompt=orchestration["music_prompt"],
+                        target_duration_hours=target_hours,
+                        audio_dir=audio_dir,
+                        api_key=config.MUBERT_API_KEY,
+                        logger=logger,
+                    )
 
-                state["music_track"] = music_path
-                if boundaries_path:
-                    state["song_boundaries"] = boundaries_path
-                save_state(run_dir, state)
-                logger.info(f"  ✓ Music ready: {music_path}")
-            else:
-                logger.info("[Stage 4/10] Music track — loaded from saved state")
-                music_path = state["music_track"]
+                    state["music_track"] = music_path
+                    if boundaries_path:
+                        state["song_boundaries"] = boundaries_path
+                    save_state(run_dir, state)
+                    logger.info(f"  ✓ Music ready: {music_path}")
+                else:
+                    logger.info("[Stage 4/10] Music track — loaded from saved state")
+
+            audio_result["music"] = state.get("music_track")
 
             # === STAGE 5: AMBIENT SOUNDS ===
             ambient_path = None
@@ -486,7 +492,6 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
             else:
                 logger.info("[Stage 5/10] Ambient sounds — skipped (--no-ambience or disabled in config)")
 
-            audio_result["music"] = music_path
             audio_result["ambient"] = ambient_path
 
         except Exception as e:
@@ -517,7 +522,6 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
 
     assembled_video_path = video_result["path"]
     clip_paths = video_result["clips"]
-    music_path = audio_result["music"]
     ambient_path = audio_result.get("ambient")
 
     # =========================================================================
@@ -531,196 +535,292 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
         base_image_path = state["base_image"]
 
     # =========================================================================
-    # STAGE 6: AUDIO ASSEMBLY
+    # PER-GENRE PIPELINE CLOSURE (stages 4, 6-11)
     # =========================================================================
-    if "mixed_audio" not in state:
-        logger.info("━" * 60)
-        logger.info("[Stage 6/10] Mixing music and ambient sounds...")
-
-        mixed_audio_path = assemble_audio(
-            music_path=music_path,
-            ambient_path=ambient_path,
-            target_duration_hours=target_hours,
-            music_volume=config.MUSIC_VOLUME,
-            ambience_volume=config.AMBIENCE_VOLUME,
-            audio_dir=audio_dir,
-            logger=logger,
-        )
-
-        state["mixed_audio"] = mixed_audio_path
-        save_state(run_dir, state)
-        logger.info(f"  ✓ Mixed audio ready: {mixed_audio_path}")
-    else:
-        logger.info("[Stage 6/10] Mixed audio — loaded from saved state")
-        mixed_audio_path = state["mixed_audio"]
-
+    # This closure runs for each genre in AB test mode, or once with genre=None
+    # in normal mode.  Using a closure keeps all local variables in scope without
+    # passing a huge argument list.
+    #
+    # State namespacing:
+    #   Normal mode   → gstate = state            (same flat dict as always)
+    #   AB test mode  → gstate = state["ab_genres"][genre]  (per-genre sub-dict)
     # =========================================================================
-    # STAGE 8: FINAL RENDER
-    # =========================================================================
-    if "final_video" not in state:
-        logger.info("━" * 60)
-        logger.info("[Stage 7/10] Rendering final video (merging video + audio)...")
+    def _run_for_genre(genre):
+        """
+        Run stages 4, 6-11 for a specific music genre (or None = all tracks).
 
-        # Build output filename: channel_name_scene_timestamp.mp4
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        safe_prompt = "".join(c if c.isalnum() or c == "_" else "_" for c in prompt[:30])
-        output_filename = f"fairway_{safe_prompt}_{timestamp}.mp4"
-        output_path = os.path.join(config.OUTPUT_DIR, output_filename)
-        os.makedirs(config.OUTPUT_DIR, exist_ok=True)
+        Returns:
+            (final_video_path, thumbnail_path, metadata, shorts_result)
+        """
+        genre_label = genre or "all tracks"
+        genre_lower = genre.lower() if genre else None
+        tag = f" ({genre})" if genre else ""
 
-        final_video_path = render_final_video(
-            video_path=assembled_video_path,
-            audio_path=mixed_audio_path,
-            output_path=output_path,
-            logger=logger,
-        )
+        # Genre-specific state namespace
+        if genre:
+            gstate = state.setdefault("ab_genres", {}).setdefault(genre, {})
+        else:
+            gstate = state
 
-        state["final_video"] = final_video_path
-        save_state(run_dir, state)
-        logger.info(f"  ✓ Final video: {final_video_path}")
-        _cleanup_intermediates(run_dir, logger)
-    else:
-        logger.info("[Stage 7/10] Final video — loaded from saved state")
-        final_video_path = state["final_video"]
+        # Genre-specific audio subdirectory
+        g_audio_dir = os.path.join(audio_dir, genre_lower) if genre else audio_dir
+        os.makedirs(g_audio_dir, exist_ok=True)
 
-    # =========================================================================
-    # STAGE 9: METADATA GENERATION
-    # =========================================================================
-    if "metadata" not in state:
-        logger.info("━" * 60)
-        logger.info("[Stage 8/10] Generating YouTube title, description, and tags...")
-
-        metadata = generate_metadata(
-            scene_prompt=prompt,
-            orchestration=orchestration,
-            duration_hours=target_hours,
-            image_path=base_image_path,
-            api_key=config.ANTHROPIC_API_KEY,
-            claude_model=config.CLAUDE_MODEL,
-            logger=logger,
-        )
-
-        # Save metadata as a JSON file next to the video
-        metadata_path = final_video_path.replace(".mp4", "_metadata.json")
-        with open(metadata_path, "w", encoding="utf-8") as f:
-            json.dump(metadata, f, indent=2, ensure_ascii=False)
-
-        # Save metadata as plain text for easy copy/paste
-        txt_path = final_video_path.replace(".mp4", "_metadata.txt")
-        tags_line = ", ".join(metadata.get("tags", []))
-        txt_content = (
-            f"TITLE:\n{metadata.get('title', '')}\n\n"
-            f"DESCRIPTION:\n{metadata.get('description', '')}\n\n"
-            f"TAGS:\n{tags_line}\n\n"
-            f"THUMBNAIL TEXT:\n{metadata.get('thumbnail_text', '')}\n"
-        )
-        with open(txt_path, "w", encoding="utf-8") as f:
-            f.write(txt_content)
-
-        state["metadata"] = metadata
-        save_state(run_dir, state)
-        logger.info(f"  ✓ Metadata saved: {metadata_path}")
-        logger.info(f"  ✓ Plain text:     {txt_path}")
-    else:
-        logger.info("[Stage 8/10] Metadata — loaded from saved state")
-        metadata = state["metadata"]
-
-    # =========================================================================
-    # STAGE 10: THUMBNAIL GENERATION
-    # =========================================================================
-    if "thumbnail" not in state:
-        logger.info("━" * 60)
-        logger.info("[Stage 9/10] Generating thumbnail image...")
-
-        thumbnail_path = generate_thumbnail(
-            base_image_path=base_image_path,
-            thumbnail_prompt=orchestration.get("thumbnail_prompt", orchestration["image_prompt"]),
-            image_source=image_source,
-            run_dir=run_dir,
-            output_dir=config.OUTPUT_DIR,
-            final_video_path=final_video_path,
-            api_key=config.BFL_API_KEY,
-            metadata=metadata,
-            logger=logger,
-        )
-
-        state["thumbnail"] = thumbnail_path
-        save_state(run_dir, state)
-        logger.info(f"  ✓ Thumbnail: {thumbnail_path}")
-    else:
-        logger.info("[Stage 9/10] Thumbnail — loaded from saved state")
-        thumbnail_path = state["thumbnail"]
-
-    # =========================================================================
-    # STAGE 11: YOUTUBE UPLOAD (OPTIONAL)
-    # =========================================================================
-    if getattr(args, 'upload', False):
-        logger.info("━" * 60)
-        logger.info("[Stage 10/10] Uploading to YouTube (unlisted)...")
-
-        upload_to_youtube(
-            video_path=final_video_path,
-            thumbnail_path=thumbnail_path,
-            metadata=metadata,
-            client_id=config.YOUTUBE_CLIENT_ID,
-            client_secret=config.YOUTUBE_CLIENT_SECRET,
-            logger=logger,
-        )
-        logger.info("  ✓ Upload complete")
-    else:
-        logger.info("[Stage 10/10] YouTube upload — skipped (pass --no-upload to skip)")
-
-    # =========================================================================
-    # STAGE 12: YOUTUBE SHORTS GENERATION (OPTIONAL)
-    # =========================================================================
-    shorts_enabled = getattr(args, 'shorts', True) and config.SHORTS_ENABLED
-    if shorts_enabled:
-        if "shorts" not in state:
+        # =================================================================
+        # STAGE 4: MUSIC
+        # =================================================================
+        if "music_track" not in gstate:
             logger.info("━" * 60)
-            logger.info("[Stage 11] Generating YouTube Shorts...")
+            logger.info(f"[Stage 4] Getting LoFi music track{tag}...")
 
-            shorts_result = generate_shorts_stage(
-                final_video_path=final_video_path,
+            music_path, boundaries_path = get_music_track(
+                music_prompt=orchestration["music_prompt"],
+                target_duration_hours=target_hours,
+                audio_dir=g_audio_dir,
+                api_key=config.MUBERT_API_KEY,
+                genre=genre,
+                logger=logger,
+            )
+
+            gstate["music_track"] = music_path
+            if boundaries_path:
+                gstate["song_boundaries"] = boundaries_path
+            save_state(run_dir, state)
+            logger.info(f"  ✓ Music ready: {music_path}")
+        else:
+            logger.info(f"[Stage 4] Music track — loaded from saved state{tag}")
+            music_path = gstate["music_track"]
+
+        # =================================================================
+        # STAGE 6: AUDIO ASSEMBLY
+        # =================================================================
+        if "mixed_audio" not in gstate:
+            logger.info("━" * 60)
+            logger.info(f"[Stage 6] Mixing music and ambient sounds{tag}...")
+
+            mixed_audio_path = assemble_audio(
+                music_path=music_path,
+                ambient_path=ambient_path,
+                target_duration_hours=target_hours,
+                music_volume=config.MUSIC_VOLUME,
+                ambience_volume=config.AMBIENCE_VOLUME,
+                audio_dir=g_audio_dir,
+                logger=logger,
+            )
+
+            gstate["mixed_audio"] = mixed_audio_path
+            save_state(run_dir, state)
+            logger.info(f"  ✓ Mixed audio ready: {mixed_audio_path}")
+        else:
+            logger.info(f"[Stage 6] Mixed audio — loaded from saved state{tag}")
+            mixed_audio_path = gstate["mixed_audio"]
+
+        # =================================================================
+        # STAGE 7: FINAL RENDER
+        # =================================================================
+        if "final_video" not in gstate:
+            logger.info("━" * 60)
+            logger.info(f"[Stage 7] Rendering final video{tag}...")
+
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            safe_prompt = "".join(c if c.isalnum() or c == "_" else "_" for c in prompt[:30])
+            genre_suffix = f"_{genre_lower}" if genre else ""
+            output_filename = f"fairway_{safe_prompt}_{timestamp}{genre_suffix}.mp4"
+            output_path = os.path.join(config.OUTPUT_DIR, output_filename)
+            os.makedirs(config.OUTPUT_DIR, exist_ok=True)
+
+            final_video_path = render_final_video(
+                video_path=assembled_video_path,
+                audio_path=mixed_audio_path,
+                output_path=output_path,
+                logger=logger,
+            )
+
+            gstate["final_video"] = final_video_path
+            save_state(run_dir, state)
+            logger.info(f"  ✓ Final video: {final_video_path}")
+        else:
+            logger.info(f"[Stage 7] Final video — loaded from saved state{tag}")
+            final_video_path = gstate["final_video"]
+
+        # =================================================================
+        # STAGE 8: METADATA
+        # =================================================================
+        if "metadata" not in gstate:
+            logger.info("━" * 60)
+            logger.info(f"[Stage 8] Generating YouTube title, description, and tags{tag}...")
+
+            metadata = generate_metadata(
+                scene_prompt=prompt,
+                orchestration=orchestration,
+                duration_hours=target_hours,
+                image_path=base_image_path,
+                api_key=config.ANTHROPIC_API_KEY,
+                claude_model=config.CLAUDE_MODEL,
+                genre=genre,
+                logger=logger,
+            )
+
+            metadata_path = final_video_path.replace(".mp4", "_metadata.json")
+            with open(metadata_path, "w", encoding="utf-8") as f:
+                json.dump(metadata, f, indent=2, ensure_ascii=False)
+
+            txt_path = final_video_path.replace(".mp4", "_metadata.txt")
+            tags_line = ", ".join(metadata.get("tags", []))
+            txt_content = (
+                f"TITLE:\n{metadata.get('title', '')}\n\n"
+                f"DESCRIPTION:\n{metadata.get('description', '')}\n\n"
+                f"TAGS:\n{tags_line}\n\n"
+                f"THUMBNAIL TEXT:\n{metadata.get('thumbnail_text', '')}\n"
+            )
+            with open(txt_path, "w", encoding="utf-8") as f:
+                f.write(txt_content)
+
+            gstate["metadata"] = metadata
+            save_state(run_dir, state)
+            logger.info(f"  ✓ Title: {metadata['title']}")
+        else:
+            logger.info(f"[Stage 8] Metadata — loaded from saved state{tag}")
+            metadata = gstate["metadata"]
+
+        # =================================================================
+        # STAGE 9: THUMBNAIL
+        # =================================================================
+        if "thumbnail" not in gstate:
+            logger.info("━" * 60)
+            logger.info(f"[Stage 9] Generating thumbnail{tag}...")
+
+            thumbnail_path = generate_thumbnail(
+                base_image_path=base_image_path,
+                thumbnail_prompt=orchestration.get("thumbnail_prompt", orchestration["image_prompt"]),
+                image_source=image_source,
                 run_dir=run_dir,
-                boundaries_path=state.get("song_boundaries"),
+                output_dir=config.OUTPUT_DIR,
+                final_video_path=final_video_path,
+                api_key=config.BFL_API_KEY,
                 metadata=metadata,
                 logger=logger,
             )
 
-            state["shorts"] = shorts_result
+            gstate["thumbnail"] = thumbnail_path
             save_state(run_dir, state)
+            logger.info(f"  ✓ Thumbnail: {thumbnail_path}")
         else:
-            logger.info("[Stage 11] YouTube Shorts — loaded from saved state")
-            shorts_result = state["shorts"]
-    else:
-        logger.info("[Stage 11] YouTube Shorts — skipped")
+            logger.info(f"[Stage 9] Thumbnail — loaded from saved state{tag}")
+            thumbnail_path = gstate["thumbnail"]
+
+        # =================================================================
+        # STAGE 10: YOUTUBE UPLOAD (OPTIONAL)
+        # =================================================================
+        if getattr(args, 'upload', False):
+            logger.info("━" * 60)
+            logger.info(f"[Stage 10] Uploading to YouTube{tag}...")
+            upload_to_youtube(
+                video_path=final_video_path,
+                thumbnail_path=thumbnail_path,
+                metadata=metadata,
+                client_id=config.YOUTUBE_CLIENT_ID,
+                client_secret=config.YOUTUBE_CLIENT_SECRET,
+                logger=logger,
+            )
+            logger.info("  ✓ Upload complete")
+        else:
+            logger.info(f"[Stage 10] YouTube upload — skipped{tag}")
+
+        # =================================================================
+        # STAGE 11: YOUTUBE SHORTS
+        # =================================================================
+        shorts_enabled = getattr(args, 'shorts', True) and config.SHORTS_ENABLED
         shorts_result = None
+        if shorts_enabled:
+            if "shorts" not in gstate:
+                logger.info("━" * 60)
+                logger.info(f"[Stage 11] Generating YouTube Shorts{tag}...")
+
+                shorts_result = generate_shorts_stage(
+                    final_video_path=final_video_path,
+                    run_dir=run_dir,
+                    boundaries_path=gstate.get("song_boundaries"),
+                    metadata=metadata,
+                    logger=logger,
+                )
+
+                gstate["shorts"] = shorts_result
+                save_state(run_dir, state)
+            else:
+                logger.info(f"[Stage 11] YouTube Shorts — loaded from saved state{tag}")
+                shorts_result = gstate["shorts"]
+        else:
+            logger.info(f"[Stage 11] YouTube Shorts — skipped{tag}")
+
+        return final_video_path, thumbnail_path, metadata, shorts_result
 
     # =========================================================================
-    # SUMMARY
+    # DISPATCH — AB test mode or normal single-genre run
     # =========================================================================
-    # Log the scene to history for the analytics recommendations panel
-    try:
-        log_scene_use(prompt, scene_library=load_scene_library())
-    except Exception:
-        pass  # Never let tracking break a successful run
+    ab_test = getattr(args, 'ab_test', False)
 
-    elapsed = time.time() - start_time
-    elapsed_min = elapsed / 60
+    if ab_test:
+        # AB test: generate one video per genre, sharing the assembled video
+        state.setdefault("ab_genres", {})
+        save_state(run_dir, state)
+        genre_results = {}
+        for genre in config.AB_TEST_GENRES:
+            logger.info("\n" + "━" * 60)
+            logger.info(f"  A/B TEST — {genre} variant")
+            logger.info("━" * 60)
+            genre_results[genre] = _run_for_genre(genre)
 
-    logger.info("\n" + "=" * 60)
-    logger.info("  FAIRWAY FREQUENCIES -- Production Complete!")
-    logger.info("=" * 60)
-    logger.info(f"  Scene:     {prompt[:50]}...")
-    logger.info(f"  Video:     {final_video_path}")
-    logger.info(f"  Thumbnail: {thumbnail_path}")
-    logger.info(f"  Duration:  {target_hours} hours")
-    logger.info(f"  Runtime:   {elapsed_min:.1f} minutes")
-    logger.info(f"  Title:     {metadata.get('title', 'N/A')}")
-    if shorts_result:
-        logger.info(f"  Shorts:    {shorts_result['count']} clips in {shorts_result['output_dir']}")
-    logger.info("=" * 60)
-    logger.info("\nYour video is ready to upload!")
+        # Clean up shared intermediates after all genres are done
+        _cleanup_intermediates(run_dir, logger)
+
+        # Summary
+        try:
+            log_scene_use(prompt, scene_library=load_scene_library())
+        except Exception:
+            pass
+
+        elapsed = time.time() - start_time
+        logger.info("\n" + "=" * 60)
+        logger.info("  FAIRWAY FREQUENCIES -- A/B Test Complete!")
+        logger.info("=" * 60)
+        logger.info(f"  Scene:    {prompt[:50]}...")
+        logger.info(f"  Duration: {target_hours} hours")
+        logger.info(f"  Runtime:  {elapsed / 60:.1f} minutes")
+        for genre, (fvp, tp, md, sr) in genre_results.items():
+            logger.info(f"  [{genre}] Video:     {fvp}")
+            logger.info(f"  [{genre}] Thumbnail: {tp}")
+            logger.info(f"  [{genre}] Title:     {md.get('title', 'N/A')}")
+            if sr:
+                logger.info(f"  [{genre}] Shorts:    {sr['count']} clips in {sr['output_dir']}")
+        logger.info("=" * 60)
+        logger.info("\nBoth genre variants are ready!")
+
+    else:
+        # Normal mode: single run using all tracks across all genre folders
+        final_video_path, thumbnail_path, metadata, shorts_result = _run_for_genre(None)
+        _cleanup_intermediates(run_dir, logger)
+
+        # Summary
+        try:
+            log_scene_use(prompt, scene_library=load_scene_library())
+        except Exception:
+            pass
+
+        elapsed = time.time() - start_time
+        logger.info("\n" + "=" * 60)
+        logger.info("  FAIRWAY FREQUENCIES -- Production Complete!")
+        logger.info("=" * 60)
+        logger.info(f"  Scene:     {prompt[:50]}...")
+        logger.info(f"  Video:     {final_video_path}")
+        logger.info(f"  Thumbnail: {thumbnail_path}")
+        logger.info(f"  Duration:  {target_hours} hours")
+        logger.info(f"  Runtime:   {elapsed / 60:.1f} minutes")
+        logger.info(f"  Title:     {metadata.get('title', 'N/A')}")
+        if shorts_result:
+            logger.info(f"  Shorts:    {shorts_result['count']} clips in {shorts_result['output_dir']}")
+        logger.info("=" * 60)
+        logger.info("\nYour video is ready to upload!")
 
 
 # =============================================================================
@@ -798,6 +898,19 @@ def parse_args():
         help="Skip YouTube Shorts generation (on by default; produces 5 Shorts per video)"
     )
     parser.set_defaults(shorts=True)
+
+    # A/B music genre test
+    parser.add_argument(
+        "--ab-test",
+        dest="ab_test",
+        action="store_true",
+        help=(
+            "Generate two videos from the same visuals — one per genre in config.AB_TEST_GENRES "
+            "(default: Jazz and HipHop). Each gets its own music, title, and thumbnail. "
+            "Add tracks to assets/music/Jazz/ and assets/music/HipHop/ before running."
+        )
+    )
+    parser.set_defaults(ab_test=False)
 
     # Convenience flags
     parser.add_argument(
