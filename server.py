@@ -351,6 +351,7 @@ def run_pipeline():
     duration = float(data.get("duration") or config.TARGET_DURATION_HOURS)
     no_ambience = bool(data.get("no_ambience") or False)
     upload = bool(data.get("upload") or False)
+    ab_test = bool(data.get("ab_test") or False)
     character = data.get("character") or config.INCLUDE_CHARACTER
     image_source = data.get("images") or config.IMAGE_SOURCE
     image_filename = (data.get("image_filename") or "").strip()
@@ -408,6 +409,9 @@ def run_pipeline():
 
     if not upload:
         cmd.append("--no-upload")
+
+    if ab_test:
+        cmd.append("--ab-test")
 
     app.logger.info(f"Starting pipeline run {run_id}: {' '.join(cmd[:5])}...")
 

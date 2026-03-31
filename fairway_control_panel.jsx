@@ -125,6 +125,7 @@ function FairwayControlPanel() {
   const [includeAmbience, setIncludeAmbience] = useState(true);
   const [duration, setDuration] = useState(2);
   const [uploadToYoutube, setUploadToYoutube] = useState(true);
+  const [abTest, setAbTest] = useState(false);
   const [stylize, setStylize] = useState(750);
   const [generatedPrompt, setGeneratedPrompt] = useState("");
   const [pipelineLog, setPipelineLog] = useState([]);
@@ -526,6 +527,7 @@ function FairwayControlPanel() {
       scene: prompt,
       clips_folder: selectedClipSet,     // which kling_clips subfolder to use
       upload: uploadToYoutube,
+      ab_test: abTest,
     };
 
     let runId = null;
@@ -590,7 +592,7 @@ function FairwayControlPanel() {
       }
     }, 2000);
 
-  }, [pipelineRunning, prompt, duration, includeAmbience, includeCharacter, selectedClipSet, uploadToYoutube]);
+  }, [pipelineRunning, prompt, duration, includeAmbience, includeCharacter, selectedClipSet, uploadToYoutube, abTest]);
 
   // ---------------------------------------------------------------------------
   // BUILD COMMAND PREVIEW (shown in the dark box on the Run tab)
@@ -603,6 +605,7 @@ function FairwayControlPanel() {
     if (!includeAmbience) parts.push('--no-ambience');
     if (includeCharacter !== 'random') parts.push(`--character ${includeCharacter}`);
     if (!uploadToYoutube) parts.push('--no-upload');
+    if (abTest) parts.push('--ab-test');
     return parts.join(' ');
   })();
 
@@ -785,6 +788,21 @@ function FairwayControlPanel() {
                   style={{ cursor: "pointer", width: 14, height: 14, accentColor: "#2D6A4F" }} />
                 <span style={{ color: uploadToYoutube ? "var(--color-text-primary)" : "var(--color-text-tertiary)" }}>
                   {uploadToYoutube ? "Upload & schedule" : "Skip upload"}
+                </span>
+              </div>
+            </div>
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 600, color: "var(--color-text-secondary)" }}>A/B MUSIC TEST</label>
+              <div style={{
+                marginTop: 4, padding: "8px 10px", fontSize: 13, borderRadius: 6,
+                border: abTest ? "1px solid #B08D57" : "1px solid var(--color-border-tertiary)",
+                background: abTest ? "rgba(176,141,87,0.08)" : "var(--color-background-secondary)",
+                display: "flex", alignItems: "center", gap: 8, cursor: "pointer", height: 37,
+              }} onClick={() => setAbTest(v => !v)}>
+                <input type="checkbox" checked={abTest} onChange={e => setAbTest(e.target.checked)}
+                  style={{ cursor: "pointer", width: 14, height: 14, accentColor: "#B08D57" }} />
+                <span style={{ color: abTest ? "#B08D57" : "var(--color-text-tertiary)" }}>
+                  {abTest ? "Jazz + Hip-Hop variants" : "Single video"}
                 </span>
               </div>
             </div>
