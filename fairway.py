@@ -58,6 +58,7 @@ from pipeline.final_render import render_final_video
 from pipeline.metadata_gen import generate_metadata
 from pipeline.thumbnail_gen import generate_thumbnail
 from pipeline.youtube_upload import upload_to_youtube
+from pipeline.shorts_gen import generate_shorts as generate_shorts_stage
 from pipeline.scene_tracker import log_scene_use
 
 
@@ -444,7 +445,7 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
                 logger.info("━" * 60)
                 logger.info("[Stage 4/10] Getting LoFi music track...")
 
-                music_path = get_music_track(
+                music_path, boundaries_path = get_music_track(
                     music_prompt=orchestration["music_prompt"],
                     target_duration_hours=target_hours,
                     audio_dir=audio_dir,
@@ -453,6 +454,8 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
                 )
 
                 state["music_track"] = music_path
+                if boundaries_path:
+                    state["song_boundaries"] = boundaries_path
                 save_state(run_dir, state)
                 logger.info(f"  ✓ Music ready: {music_path}")
             else:
@@ -668,6 +671,32 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
         logger.info("[Stage 10/10] YouTube upload — skipped (pass --no-upload to skip)")
 
     # =========================================================================
+    # STAGE 12: YOUTUBE SHORTS GENERATION (OPTIONAL)
+    # =========================================================================
+    shorts_enabled = getattr(args, 'shorts', True) and config.SHORTS_ENABLED
+    if shorts_enabled:
+        if "shorts" not in state:
+            logger.info("━" * 60)
+            logger.info("[Stage 11] Generating YouTube Shorts...")
+
+            shorts_result = generate_shorts_stage(
+                final_video_path=final_video_path,
+                run_dir=run_dir,
+                boundaries_path=state.get("song_boundaries"),
+                metadata=metadata,
+                logger=logger,
+            )
+
+            state["shorts"] = shorts_result
+            save_state(run_dir, state)
+        else:
+            logger.info("[Stage 11] YouTube Shorts — loaded from saved state")
+            shorts_result = state["shorts"]
+    else:
+        logger.info("[Stage 11] YouTube Shorts — skipped")
+        shorts_result = None
+
+    # =========================================================================
     # SUMMARY
     # =========================================================================
     # Log the scene to history for the analytics recommendations panel
@@ -688,6 +717,8 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
     logger.info(f"  Duration:  {target_hours} hours")
     logger.info(f"  Runtime:   {elapsed_min:.1f} minutes")
     logger.info(f"  Title:     {metadata.get('title', 'N/A')}")
+    if shorts_result:
+        logger.info(f"  Shorts:    {shorts_result['count']} clips in {shorts_result['output_dir']}")
     logger.info("=" * 60)
     logger.info("\nYour video is ready to upload!")
 
@@ -758,6 +789,15 @@ def parse_args():
         help="Skip YouTube upload (upload is on by default; requires YouTube API setup)"
     )
     parser.set_defaults(upload=True)
+
+    # YouTube Shorts generation
+    parser.add_argument(
+        "--no-shorts",
+        dest="shorts",
+        action="store_false",
+        help="Skip YouTube Shorts generation (on by default; produces 5 Shorts per video)"
+    )
+    parser.set_defaults(shorts=True)
 
     # Convenience flags
     parser.add_argument(
@@ -851,7 +891,7 @@ def main():
         args.duration = 0.05          # 3 minutes (0.05 hours)
         args.no_ambience = False
         args.character = "never"      # Landscape only for speed
-        args.images = args.images or config.IMAGE_SOURCE
+        args.images = config.IMAGE_SOURCE
         prompt = "Sunny morning, classic parkland course, gentle hills, puffy clouds"
     elif args.random:
         # Ask Claude to generate a fresh seasonal scene for this month's art style

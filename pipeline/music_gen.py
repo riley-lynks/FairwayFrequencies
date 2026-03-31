@@ -65,7 +65,7 @@ def get_music_track(
     audio_dir: str,
     api_key: str,
     logger: logging.Logger = None,
-) -> str:
+) -> tuple:
     """
     Get a LoFi music track, either from the local library or Mubert API.
 
@@ -80,7 +80,10 @@ def get_music_track(
         logger:               Logger for progress messages.
 
     Returns:
-        Path to the ready-to-use music audio file.
+        Tuple of (music_path, boundaries_path):
+          - music_path:      Path to the ready-to-use music audio file.
+          - boundaries_path: Path to song_boundaries.json (or None if single
+                             track / Mubert — no meaningful boundaries).
 
     Raises:
         RuntimeError: If both local library and Mubert API fail.
@@ -96,7 +99,8 @@ def get_music_track(
         output_path = os.path.join(audio_dir, "music_looped.wav")
 
         if len(library_tracks) == 1:
-            # Only one track available — fall back to looping it
+            # Only one track available — fall back to looping it.
+            # No meaningful song boundaries when looping a single track.
             local_logger.info(f"  Only 1 track — looping: {os.path.basename(library_tracks[0])}")
             _loop_track_to_duration(
                 track_path=library_tracks[0],
@@ -104,17 +108,18 @@ def get_music_track(
                 output_path=output_path,
                 local_logger=local_logger,
             )
+            return output_path, None
         else:
-            # Multiple tracks — sequence them in random order
+            # Multiple tracks — sequence them in random order.
+            # _sequence_tracks_to_duration returns the boundaries file path.
             local_logger.info(f"  Sequencing {len(library_tracks)} tracks in random order...")
-            _sequence_tracks_to_duration(
+            boundaries_path = _sequence_tracks_to_duration(
                 tracks=library_tracks,
                 target_seconds=target_seconds,
                 output_path=output_path,
                 local_logger=local_logger,
             )
-
-        return output_path
+            return output_path, boundaries_path
 
     # No local tracks — use Mubert API
     local_logger.info("  No local tracks in assets/music/. Trying Mubert API...")
@@ -153,9 +158,9 @@ def get_music_track(
             output_path=output_path,
             local_logger=local_logger,
         )
-        return output_path
+        return output_path, None  # No song boundaries for single looped Mubert track
 
-    return mubert_path
+    return mubert_path, None  # No song boundaries for single Mubert track
 
 
 def _find_library_tracks() -> list:
@@ -184,7 +189,7 @@ def _sequence_tracks_to_duration(
     target_seconds: float,
     output_path: str,
     local_logger,
-):
+) -> str:
     """
     Sequence multiple tracks in random shuffled order with smooth crossfades,
     cycling through the library until the target duration is reached.
@@ -193,18 +198,26 @@ def _sequence_tracks_to_duration(
     naturally instead of cutting abruptly. Tracks are processed in batches
     of AUDIO_BATCH_SIZE to stay within FFmpeg's filter graph limits.
 
+    Also exports song boundary timestamps so the Shorts generator knows
+    exactly where each song begins in the final mixed timeline.
+
     Args:
         tracks:         List of audio file paths in the local library.
         target_seconds: How many seconds long the output should be.
         output_path:    Where to save the final sequenced audio.
         local_logger:   Logger.
+
+    Returns:
+        Path to the song_boundaries.json file (or None if export failed).
     """
     shuffled = tracks[:]
     random.shuffle(shuffled)
 
     # Build the sequence — pad generously because each crossfade eats
-    # CROSSFADE_SECONDS from the running total
+    # CROSSFADE_SECONDS from the running total.
+    # Also track each track's duration so we can compute boundary timestamps.
     sequence = []
+    track_durations = []
     total = 0.0
     idx = 0
     # Buffer = target + extra for crossfade overhead + 60s safety margin
@@ -213,10 +226,37 @@ def _sequence_tracks_to_duration(
         track = shuffled[idx % len(shuffled)]
         duration = _get_audio_duration(track)
         sequence.append(track)
+        track_durations.append(duration)
         total += duration
         idx += 1
         if idx % len(shuffled) == 0:
             random.shuffle(shuffled)
+
+    # --- Song Boundary Export ---
+    # WHY: The Shorts generator needs to know where each song starts so it
+    # can begin each Short at a clean fade-in, not in the middle of a track.
+    # Each crossfade overlaps by CROSSFADE_SECONDS, so track N starts at:
+    #   sum(durations[0:N]) - N * CROSSFADE_SECONDS
+    # (The first track always starts at 0.0)
+    boundaries = [0.0]
+    position = 0.0
+    for i in range(len(track_durations) - 1):
+        # The next song starts after this track's duration minus the crossfade
+        # overlap with the next track
+        position += track_durations[i] - CROSSFADE_SECONDS
+        # Only include boundaries that fall within the final trimmed duration
+        if position >= target_seconds:
+            break
+        boundaries.append(round(position, 2))
+
+    boundaries_path = os.path.join(os.path.dirname(output_path), "song_boundaries.json")
+    try:
+        with open(boundaries_path, "w") as f:
+            json.dump(boundaries, f, indent=2)
+        local_logger.info(f"  ✓ Song boundaries: {len(boundaries)} timestamps saved")
+    except Exception as e:
+        local_logger.warning(f"  ⚠️ Could not save song boundaries: {e}")
+        boundaries_path = None
 
     local_logger.info(
         f"  Sequence: {len(sequence)} tracks, "
@@ -255,6 +295,8 @@ def _sequence_tracks_to_duration(
         )
     except subprocess.CalledProcessError as e:
         raise RuntimeError(f"FFmpeg normalize failed: {e.stderr[-300:]}")
+
+    return boundaries_path
 
 
 def _crossfade_audio_batch(

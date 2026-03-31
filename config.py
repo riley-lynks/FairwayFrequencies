@@ -272,3 +272,38 @@ RETRY_BASE_DELAY = 5    # Seconds to wait before first retry. Doubles each attem
 # =============================================================================
 OUTPUT_DIR = "./output"  # Where finished videos, thumbnails, and metadata go
 LOG_DIR = "./logs"       # Where generation logs are stored for debugging
+
+# =============================================================================
+# YOUTUBE SHORTS — Automatic Short-Form Content
+# =============================================================================
+# After each long-form video is finished, the pipeline can automatically
+# generate 4 YouTube Shorts from the best moments (near song transitions).
+#
+# WHY Shorts? YouTube Shorts get 10x the impressions of long-form videos
+# for new channels. Each Short funnels viewers to the full-length video.
+# 4 Shorts per video = 4 chances to reach new viewers per upload.
+
+SHORTS_ENABLED = True           # Set to False to skip Shorts generation entirely
+SHORTS_COUNT = 5                # How many Shorts to produce per video (one per effect)
+SHORTS_DURATION = 45            # Length of each Short in seconds (YouTube max is 60)
+SHORTS_WIDTH = 1080             # Vertical video width  (9:16 aspect ratio for Shorts)
+SHORTS_HEIGHT = 1920            # Vertical video height
+
+# Golfquilizer — The signature Fairway Frequencies audio-reactive visualizer.
+# It renders a circular graphic equalizer (shaped like a golf ball) that
+# pulses to the LoFi beats, overlaid on the golf course scene. Effect #5.
+GOLFQUILIZER_OPACITY = 0.6     # How transparent the visualizer circle is (0.0–1.0)
+GOLFQUILIZER_SIZE = 700         # Diameter of the bar halo canvas (px)
+GOLFQUILIZER_BALL_SIZE = 700    # Display width of the golf ball PNG — the ball
+GOLFQUILIZER_OFFSET_X = 0        # Pixels to shift the whole visualizer (ring + ball) right/left
+GOLFQUILIZER_OFFSET_Y = 0        # Pixels to shift the whole visualizer (ring + ball) down/up
+GOLFQUILIZER_BALL_OFFSET_X = 10  # Nudge just the ball right (+) or left (-) within the ring
+GOLFQUILIZER_BALL_OFFSET_Y = 9  # Nudge just the ball down (+) or up (-) within the ring
+GOLFQUILIZER_BALL_WHITE = os.path.join("assets", "golfquilizer", "golf_ball_white.png")
+GOLFQUILIZER_BALL_BLACK = os.path.join("assets", "golfquilizer", "golf_ball_black.png")
+
+# Silence detection — fallback for finding song boundaries when the pipeline
+# doesn't have explicit boundary data (e.g., single-track or Mubert runs).
+# These thresholds tell FFmpeg what counts as "quiet" between songs.
+SILENCE_THRESHOLD_DB = -35      # Audio below this dB level = "silence"
+SILENCE_MIN_DURATION = 0.8      # Minimum seconds of quiet to count as a boundary
