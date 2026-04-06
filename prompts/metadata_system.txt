@@ -41,7 +41,10 @@ LINE 4 (fixed emoji lines):
 🎵 Music: Original lofi instrumentals
 🎨 Art: Studio Ghibli-inspired animated watercolor
 
-LINE 5 (fixed CTA): "New scenes every week. Subscribe for more peaceful golf course vibes."
+LINE 5 (fixed CTA — use these exact lines):
+"🔔 New scenes drop every week — subscribe so you never miss a round.
+👍 If this helped you focus or unwind, a like helps the channel grow.
+🎥 More long-form golf course sessions on the channel."
 
 LINE 6 (timestamps — generated separately by the chapter system, do NOT include in this field)
 

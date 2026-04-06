@@ -242,7 +242,9 @@ def _build_fallback_metadata(scene_prompt, mood, time_of_day, season, has_charac
         "Perfect for studying, working, relaxing, or falling asleep.\n\n"
         "🎵 Music: Original lofi instrumentals\n"
         "🎨 Art: Studio Ghibli-inspired animated watercolor\n\n"
-        "New scenes every week. Subscribe for more peaceful golf course vibes.\n\n"
+        "🔔 New scenes drop every week — subscribe so you never miss a round.\n"
+        "👍 If this helped you focus or unwind, a like helps the channel grow.\n"
+        "🎥 More long-form golf course sessions on the channel.\n\n"
         "#lofi #studymusic #ambientmusic #chillbeats #golfvibes"
     )
     description = _append_chapters(base_desc, stamps, _fallback_chapter_names(len(stamps), mood))
@@ -293,7 +295,7 @@ Description structure:
   Line 2: Unique 2-3 sentence scene description with keywords woven in naturally.
   Line 3 (fixed): "Perfect for studying, working, relaxing, or falling asleep."
   Lines 4-5 (fixed): "🎵 Music: Original lofi instrumentals\\n🎨 Art: Studio Ghibli-inspired animated watercolor"
-  Line 6 (fixed): "New scenes every week. Subscribe for more peaceful golf course vibes."
+  Line 6 (fixed): "🔔 New scenes drop every week — subscribe so you never miss a round.\n👍 If this helped you focus or unwind, a like helps the channel grow.\n🎥 More long-form golf course sessions on the channel."
   Hashtags: #lofi #studymusic #ambientmusic #chillbeats #golfvibes + 3-5 scene-specific ones.
 
 Tags should include: lofi, golf, lofi golf, study music, chill music, the scene keywords,

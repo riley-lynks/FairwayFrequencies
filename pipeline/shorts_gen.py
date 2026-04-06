@@ -110,6 +110,38 @@ HOOK_TEMPLATES = {
     ],
 }
 
+# CTA (call-to-action) blocks appended to each Short's description.
+# Each effect gets its own variant so 5 Shorts from the same upload don't
+# look copy-pasted. All variants push the viewer toward the full video and
+# a subscription.
+CTA_TEMPLATES = {
+    "warm_grade": (
+        "🎥 Full video on the channel — {duration}+ hours of this exact scene.\n"
+        "🔔 Subscribe so you never miss a new golf course drop.\n"
+        "👍 Tap like if this made your day a little calmer."
+    ),
+    "ken_burns": (
+        "🎥 Want the full experience? The complete {duration}-hour version is on our channel.\n"
+        "🔔 Subscribe for a new animated golf course every week.\n"
+        "👍 Like this Short if the pan felt cinematic to you."
+    ),
+    "bloom_fade": (
+        "🎥 This is a 45-sec preview — the full {duration}-hour video lives on Fairway Frequencies.\n"
+        "🔔 Hit subscribe for weekly LoFi golf drops.\n"
+        "💬 Drop a comment if this is now your go-to study background."
+    ),
+    "cool_mist": (
+        "🎥 Full {duration}-hour version on the channel — perfect for a long study session.\n"
+        "🔔 Subscribe and let the fairway follow you every week.\n"
+        "👍 Like if the misty vibes hit different today."
+    ),
+    "golfquilizer": (
+        "🎥 The Golfquilizer runs the whole round in the full {duration}-hour video on our channel.\n"
+        "🔔 Subscribe — new animated golf courses drop weekly.\n"
+        "💬 Tell us in the comments: study session or late-night wind-down?"
+    ),
+}
+
 # Map scene keywords to mood words used in hook templates
 MOOD_MAP = {
     "sunset": "sunset", "sunrise": "sunrise", "golden": "golden hour",
@@ -703,7 +735,13 @@ def _generate_shorts_metadata(
             mood = mood_word
             break
 
-    hashtags = "#lofi #studymusic #chillbeats #golfvibes #shorts #ambientmusic"
+    hashtags = "#lofi #studymusic #chillbeats #golfvibes #shorts #ambientmusic #lofigolf #fairwayfrequencies"
+
+    # Approximate full-video duration for CTA copy (pulled from config)
+    try:
+        full_duration = int(config.TARGET_DURATION_HOURS)
+    except Exception:
+        full_duration = 2
 
     metadata = {
         "source_video_title": parent_title,
@@ -715,13 +753,15 @@ def _generate_shorts_metadata(
         hooks = HOOK_TEMPLATES.get(effect, HOOK_TEMPLATES["warm_grade"])
         hook = random.choice(hooks).format(mood=mood)
 
+        cta = CTA_TEMPLATES.get(effect, CTA_TEMPLATES["warm_grade"]).format(
+            duration=full_duration
+        )
+
         description = (
             f"{hook}\n\n"
             f"🎵 Lofi beats for studying, relaxing & working\n"
             f"🎨 Studio Ghibli-inspired golf course art\n\n"
-            f"Full-length version on our channel — hours of peaceful "
-            f"golf course vibes.\n"
-            f"Subscribe for new scenes every week.\n\n"
+            f"{cta}\n\n"
             f"{hashtags}"
         )
 
