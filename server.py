@@ -51,6 +51,13 @@ import config
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 os.chdir(PROJECT_ROOT)
 
+# Ensure WinGet-installed tools (ffmpeg, etc.) are on the PATH for subprocesses.
+# WinGet installs symlinks to %LOCALAPPDATA%\Microsoft\WinGet\Links, which may
+# not be inherited by CREATE_NO_WINDOW subprocesses on a fresh Windows install.
+_winget_links = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "WinGet", "Links")
+if _winget_links and _winget_links not in os.environ.get("PATH", ""):
+    os.environ["PATH"] = _winget_links + os.pathsep + os.environ.get("PATH", "")
+
 app = Flask(__name__, static_folder=PROJECT_ROOT)
 CORS(app)  # Allow cross-origin requests (needed for browser → localhost API calls)
 

@@ -15,7 +15,7 @@ If status = 200 Then
 Else
     ' Start the server silently using pythonw.exe (0 = hidden window)
     Dim pythonw, projectRoot
-    pythonw = "C:\Users\riley\AppData\Local\Programs\Python\Python311\pythonw.exe"
+    pythonw = "C:\Users\riley\AppData\Local\Python\pythoncore-3.14-64\pythonw.exe"
     projectRoot = "F:\Claude Code\LoFi Youtube Automation"
     shell.Run Chr(34) & pythonw & Chr(34) & " -X utf8 """ & projectRoot & "\server.py""", 0, False
 

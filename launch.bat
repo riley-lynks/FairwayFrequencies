@@ -28,7 +28,7 @@ if %errorlevel% == 0 (
 :: Start the server using pythonw.exe — the "w" version runs with NO console window
 :: WHY pythonw? Regular python.exe shows a black terminal window. pythonw.exe is silent.
 :: The server runs invisibly in the background until you stop it or restart your PC.
-start "" "C:\Users\riley\AppData\Local\Programs\Python\Python311\pythonw.exe" -X utf8 server.py
+start "" "C:\Users\riley\AppData\Local\Python\pythoncore-3.14-64\pythonw.exe" -X utf8 server.py
 
 :: Wait 2 seconds for Flask to initialize before opening the browser
 :: WHY: Flask takes ~1 second to start. If we open the browser too fast it gets a "refused" error.
