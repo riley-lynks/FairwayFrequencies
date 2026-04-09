@@ -154,19 +154,28 @@ def generate_scene_prompt(
     season = _month_to_season(datetime.now().month)
 
     # Build recently-used list to steer Claude away from repetition
+    # NOTE: include ALL recent scenes — both library and custom — so Claude
+    # can see the full history and avoid repeating course types.
     avoid_text = ""
     if scene_history:
-        recent_names = [h.get("scene_name", h.get("prompt", ""))[:60]
-                        for h in scene_history[:8] if h.get("scene_id") != "custom"]
+        recent_names = [h.get("scene_name", h.get("prompt", ""))[:80]
+                        for h in scene_history[:8]]
         if recent_names:
-            avoid_text = "\n\nRECENTLY USED (avoid these moods/locations):\n" + \
+            avoid_text = "\n\nRECENTLY USED (avoid these course types and moods):\n" + \
                          "\n".join(f"- {n}" for n in recent_names)
+
+    course_types = (
+        "parkland, links, desert, tropical island, mountain alpine, "
+        "Japanese garden, New England autumn, Hawaiian volcanic, English countryside, "
+        "lakeside, clifftop coastal, winter frost, rainy urban, practice range"
+    )
 
     system = (
         "You are a creative director for Fairway Frequencies, a LoFi golf YouTube channel. "
         "Generate ONE vivid golf course scene description. Keep it to 2-3 sentences. "
-        "Include a specific time of day, weather/atmosphere, and location type. "
+        "Include a specific time of day, weather/atmosphere, and course type. "
         "Match the season. Evoke calm and peace. "
+        f"Choose a course type from this list and rotate — avoid repeating recent types: {course_types}. "
         "Do NOT mention the art style — it is applied automatically. "
         "Return ONLY the scene description. No title, no preamble, no quotes."
     )
@@ -175,7 +184,8 @@ def generate_scene_prompt(
         f"Month: {month_name} ({season})\n"
         f"Art style this month: {art_style['name']} — {art_style['description']}"
         f"{avoid_text}\n\n"
-        "Generate a fresh golf scene for this month."
+        "Generate a fresh golf scene for this month. "
+        "Pick a course type that has NOT appeared recently in the list above."
     )
 
     client = anthropic.Anthropic(api_key=api_key)

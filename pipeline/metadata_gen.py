@@ -47,7 +47,7 @@ def _chapter_timestamps(duration_hours: float) -> list[tuple[int, str]]:
     while t < total_seconds:
         h = t // 3600
         m = (t % 3600) // 60
-        label = f"{h}:{m:02d}:00" if h > 0 else f"0:{m:02d}"
+        label = f"{h}:{m:02d}:00" if h > 0 else f"{m}:00"
         stamps.append((t, label))
         t += interval
     return stamps
@@ -108,12 +108,17 @@ def generate_metadata(
     # Map raw genre keys to human-readable display names for Claude
     _GENRE_DISPLAY = {"jazz": "Jazz", "hiphop": "Hip-Hop", "hip-hop": "Hip-Hop"}
     genre_display = _GENRE_DISPLAY.get(genre.lower(), genre) if genre else None
+
+    _GENRE_LEAD_PHRASES = {
+        "Jazz": '"Jazz to Study & Relax" or "Jazz to Relax To"',
+        "Hip-Hop": '"Lofi Hip Hop Study Beats" or "Beats to Study To" or "Chill Beats to Study To"',
+    }
+    genre_lead_hint = _GENRE_LEAD_PHRASES.get(genre_display, "")
     genre_line = (
         f"\nMusic genre: {genre_display} — "
-        "include the genre name prominently in both the title and thumbnail_text. "
-        f"Title example pattern: '... | {genre_display} Lofi | ...' "
-        f"thumbnail_text example: '{genre_display.upper()} LOFI'"
-    ) if genre_display else ""
+        f"the title MUST use one of these lead phrases for this genre: {genre_lead_hint}. "
+        "Do NOT use a jazz lead phrase for hip-hop or vice versa."
+    ) if genre_display and genre_lead_hint else ""
 
     user_message = f"""Scene prompt: "{scene_prompt}"
 Mood: {mood}
@@ -236,12 +241,9 @@ def _build_fallback_metadata(scene_prompt, mood, time_of_day, season, has_charac
     stamps = _chapter_timestamps(duration_hours)
     genre_phrase = f" {genre_display}" if genre_display else " Hip Hop"
     base_desc = (
-        "Welcome to Fairway Frequencies — lofi beats and ambient sounds from the world's most peaceful golf courses.\n\n"
-        f"A {mood} {time_of_day} scene at a beautiful golf course, animated in a Studio Ghibli-inspired watercolor style. "
+        "Lofi beats and ambient sounds for studying, working, and relaxing — from the world's most peaceful golf courses. 🎵\n\n"
+        f"A {mood} {time_of_day} scene at a beautiful golf course. "
         f"Pure lofi{genre_phrase} and ambient sounds for studying, deep focus, and relaxing — no interruptions, just the course.\n\n"
-        "Perfect for studying, working, relaxing, or falling asleep.\n\n"
-        "🎵 Music: Original lofi instrumentals\n"
-        "🎨 Art: Studio Ghibli-inspired animated watercolor\n\n"
         "🔔 New scenes drop every week — subscribe so you never miss a round.\n"
         "👍 If this helped you focus or unwind, a like helps the channel grow.\n"
         "🎥 More long-form golf course sessions on the channel.\n\n"
@@ -291,11 +293,9 @@ Examples:
   "Moonlit Links Course | Dreamy Lofi Hip Hop | 3 Hours ⛳"
 
 Description structure:
-  Line 1 (fixed): "Welcome to Fairway Frequencies — lofi beats and ambient sounds from the world's most peaceful golf courses."
+  Line 1 (fixed): "Lofi beats and ambient sounds for studying, working, and relaxing — from the world's most peaceful golf courses. 🎵"
   Line 2: Unique 2-3 sentence scene description with keywords woven in naturally.
-  Line 3 (fixed): "Perfect for studying, working, relaxing, or falling asleep."
-  Lines 4-5 (fixed): "🎵 Music: Original lofi instrumentals\\n🎨 Art: Studio Ghibli-inspired animated watercolor"
-  Line 6 (fixed): "🔔 New scenes drop every week — subscribe so you never miss a round.\n👍 If this helped you focus or unwind, a like helps the channel grow.\n🎥 More long-form golf course sessions on the channel."
+  Line 3 (fixed): "🔔 New scenes drop every week — subscribe so you never miss a round.\n👍 If this helped you focus or unwind, a like helps the channel grow.\n🎥 More long-form golf course sessions on the channel."
   Hashtags: #lofi #studymusic #ambientmusic #chillbeats #golfvibes + 3-5 scene-specific ones.
 
 Tags should include: lofi, golf, lofi golf, study music, chill music, the scene keywords,

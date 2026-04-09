@@ -68,6 +68,7 @@ def assemble_living_painting(
     blend_seconds: float,
     run_dir: str,
     norm_dir: str,
+    stabilize: bool = False,
     logger: logging.Logger = None,
 ) -> str:
     """
@@ -101,10 +102,13 @@ def assemble_living_painting(
     local_logger.info(f"  Processing {len(clip_paths)} animation clips")
     local_logger.info(f"  Target: {target_duration_hours} hours = {target_duration_hours * 3600:.0f} seconds")
 
-    # Step 1: Normalize all clips to identical specs
-    local_logger.info("  Step 1/4: Normalizing clips (resolution, framerate, codec)...")
-    normalized_clips = _normalize_clips(clip_paths, norm_dir, local_logger)
-    local_logger.info(f"  ✓ {len(normalized_clips)} clips normalized")
+    # Step 1: Normalize all clips to identical specs (+ optional stabilization)
+    if stabilize:
+        local_logger.info("  Step 1/4: Normalizing + stabilizing clips (2-pass vidstab)...")
+    else:
+        local_logger.info("  Step 1/4: Normalizing clips (resolution, framerate, codec)...")
+    normalized_clips = _normalize_clips(clip_paths, norm_dir, stabilize, local_logger)
+    local_logger.info(f"  ✓ {len(normalized_clips)} clips normalized{' and stabilized' if stabilize else ''}")
 
     # Step 2: Get clip durations and build playlist
     local_logger.info("  Step 2/4: Building playlist...")
@@ -163,7 +167,7 @@ def assemble_living_painting(
     return assembled_path
 
 
-def _normalize_clips(clip_paths: list, norm_dir: str, local_logger) -> list:
+def _normalize_clips(clip_paths: list, norm_dir: str, stabilize: bool, local_logger) -> list:
     """
     Re-encode all clips to identical resolution, framerate, and codec.
 
@@ -194,48 +198,85 @@ def _normalize_clips(clip_paths: list, norm_dir: str, local_logger) -> list:
             normalized.append(norm_path)
             continue
 
-        local_logger.info(f"  Normalizing clip {i+1}/{len(clip_paths)}: {clip_name}")
+        local_logger.info(f"  {'Stabilizing' if stabilize else 'Normalizing'} clip {i+1}/{len(clip_paths)}: {clip_name}")
 
-        # FFmpeg command to normalize the clip:
-        # -i: input file
-        # -vf: video filter chain
-        #   scale=1920:1080: resize to 1080p (force:1 = don't keep aspect ratio, fill it)
-        #   fps=30: force 30 frames per second
-        # -c:v libx264: encode video as H.264
-        # -crf 18: quality level (18 = high quality, visually near-lossless)
-        # -preset fast: encoding speed vs compression (fast = good balance)
-        # -an: remove audio (we add music separately in the audio pipeline)
-        # WHY remove audio? Kling clips sometimes have a faint ambient sound baked in.
-        # We don't want that — we're adding our own LoFi music track.
-        cmd = [
-            "ffmpeg", "-y",          # -y = overwrite output without asking
-            "-i", clip_path,
-            "-vf", f"scale={config.VIDEO_WIDTH}:{config.VIDEO_HEIGHT}:force_original_aspect_ratio=increase,"
-                   f"crop={config.VIDEO_WIDTH}:{config.VIDEO_HEIGHT},"
-                   f"fps={TARGET_FPS}",
-            "-c:v", VIDEO_CODEC,
-            "-crf", VIDEO_CRF,
-            "-preset", VIDEO_PRESET,
-            "-an",                   # Remove audio from the clip
-            "-pix_fmt", "yuv420p",   # Pixel format compatible with all players
-            norm_path,
-        ]
+        # The base video filter chain: scale to target resolution, then crop, then fps
+        base_vf = (
+            f"scale={config.VIDEO_WIDTH}:{config.VIDEO_HEIGHT}:force_original_aspect_ratio=increase,"
+            f"crop={config.VIDEO_WIDTH}:{config.VIDEO_HEIGHT},"
+            f"fps={TARGET_FPS}"
+        )
 
         try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,  # Capture stdout/stderr
-                text=True,
-                check=True,           # Raise exception if FFmpeg exits with an error
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
+            if stabilize:
+                # Two-pass vidstab:
+                # Pass 1 — vidstabdetect: analyzes motion in the raw clip and writes
+                #           a .trf (transform) file. No output video is produced (-f null).
+                # Pass 2 — vidstabtransform: applies the correction from the .trf file,
+                #           then runs the normal scale/crop/fps chain.
+                #
+                # vidstabtransform settings:
+                #   smoothing=10  — considers 10 frames before/after for smoothing (gentle)
+                #   optzoom=0     — disables auto-zoom (we handle framing with scale+crop)
+                trf_path = os.path.join(norm_dir, f"stab_{i:02d}.trf")
+
+                # Pass 1: motion analysis
+                pass1_cmd = [
+                    "ffmpeg", "-y",
+                    "-i", clip_path,
+                    "-vf", f"vidstabdetect=shakiness=5:accuracy=15:result={trf_path}",
+                    "-f", "null", "-",
+                ]
+                subprocess.run(
+                    pass1_cmd,
+                    capture_output=True, text=True, check=True,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                )
+                local_logger.debug(f"  Pass 1 done: {trf_path}")
+
+                # Pass 2: apply stabilization + full normalize
+                pass2_cmd = [
+                    "ffmpeg", "-y",
+                    "-i", clip_path,
+                    "-vf", f"vidstabtransform=input={trf_path}:smoothing=10:optzoom=0,{base_vf}",
+                    "-c:v", VIDEO_CODEC,
+                    "-crf", VIDEO_CRF,
+                    "-preset", VIDEO_PRESET,
+                    "-an",
+                    "-pix_fmt", "yuv420p",
+                    norm_path,
+                ]
+                subprocess.run(
+                    pass2_cmd,
+                    capture_output=True, text=True, check=True,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                )
+            else:
+                # Standard single-pass normalization
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-i", clip_path,
+                    "-vf", base_vf,
+                    "-c:v", VIDEO_CODEC,
+                    "-crf", VIDEO_CRF,
+                    "-preset", VIDEO_PRESET,
+                    "-an",
+                    "-pix_fmt", "yuv420p",
+                    norm_path,
+                ]
+                subprocess.run(
+                    cmd,
+                    capture_output=True, text=True, check=True,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                )
+
             normalized.append(norm_path)
             duration = get_video_duration(norm_path)
-            local_logger.debug(f"  Normalized: {duration:.1f}s — {norm_path}")
+            local_logger.debug(f"  {'Stabilized' if stabilize else 'Normalized'}: {duration:.1f}s — {norm_path}")
 
         except subprocess.CalledProcessError as e:
             local_logger.warning(
-                f"  ⚠️ Failed to normalize clip {clip_name}: {e.stderr[-300:]}"
+                f"  ⚠️ Failed to {'stabilize' if stabilize else 'normalize'} clip {clip_name}: {e.stderr[-300:]}"
             )
             # Skip this clip rather than crashing the whole pipeline
 

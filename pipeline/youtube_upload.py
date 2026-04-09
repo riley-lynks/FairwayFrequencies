@@ -57,16 +57,21 @@ def next_optimal_publish_time(tracker_file: str = "output/video_tracker.json") -
     """
     Calculate the next optimal YouTube publish time, skipping already-booked slots.
 
-    Target: Thursday or Friday at 7pm EST.
-    Checks the video tracker to avoid scheduling two videos on the same day —
-    so running the pipeline 3x in a row will spread videos across 3 separate weeks.
+    Target: Sunday at 9am EST.
+    Sunday morning is peak time for lofi/study music listeners — they front-load
+    focus sessions (journaling, study prep) before the week starts. A 9am upload
+    indexes by the time the audience settles in, then accumulates watch time
+    passively throughout the day as background music.
+
+    Checks the video tracker to avoid scheduling two videos on the same Sunday —
+    so running the pipeline back-to-back will spread videos across separate weeks.
 
     Returns:
-        A timezone-aware datetime for the next available Thu or Fri at 7pm EST.
+        A timezone-aware datetime for the next available Sunday at 9am EST.
     """
-    est = timezone(timedelta(hours=-5))  # EST (UTC-5); accounts for standard time
+    est = timezone(timedelta(hours=-5))  # EST (UTC-5)
     now = datetime.now(est)
-    target_hour = 19  # 7pm EST
+    target_hour = 9   # 9am EST
 
     # Load already-scheduled future publish dates from the tracker
     booked_dates = set()
@@ -84,20 +89,18 @@ def next_optimal_publish_time(tracker_file: str = "output/video_tracker.json") -
         except Exception:
             pass  # Tracker unreadable — proceed without it
 
-    # Walk forward through Thu/Fri slots until we find an open one
-    # Weekday numbers: 0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri
-    target_days = [3, 4]  # Thursday, Friday
-
+    # Walk forward through Sunday slots until we find an open one
+    # Weekday numbers: 0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri, 5=Sat, 6=Sun
     for days_ahead in range(60):  # Look up to ~2 months ahead
         candidate = now + timedelta(days=days_ahead)
-        if candidate.weekday() in target_days:
+        if candidate.weekday() == 6:  # Sunday
             publish_dt = candidate.replace(
                 hour=target_hour, minute=0, second=0, microsecond=0
             )
             if publish_dt > now and publish_dt.date() not in booked_dates:
                 return publish_dt
 
-    # Fallback: 7 days from now at 7pm (should never hit this)
+    # Fallback: 7 days from now at 9am (should never hit this)
     return (now + timedelta(days=7)).replace(
         hour=target_hour, minute=0, second=0, microsecond=0
     )
@@ -154,7 +157,7 @@ def upload_to_youtube(
     # Calculate the optimal publish time (next Thu or Fri at 7pm EST)
     publish_at = next_optimal_publish_time()
     publish_at_str = publish_at.strftime("%Y-%m-%dT%H:%M:%S%z")
-    publish_day = publish_at.strftime("%A %B %d at %I:%M%p EST").replace(" 0", " ")
+    publish_day = publish_at.strftime("%A %B %-d at %I:%M%p EST")
 
     # Prepare the video metadata for the YouTube API
     # YouTube uses numeric category IDs — 10 = Music

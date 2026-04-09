@@ -431,6 +431,7 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
                     blend_seconds=config.LOOP_BLEND_SECONDS,
                     run_dir=run_dir,
                     norm_dir=norm_dir,
+                    stabilize=getattr(args, "stabilize", False),
                     logger=logger,
                 )
 
@@ -953,6 +954,13 @@ def parse_args():
         "--resume",
         metavar="RUN_ID",
         help="Resume a failed run by its ID (e.g., 'runs/20260318_143201')"
+    )
+
+    # Video stabilization (two-pass vidstab — removes camera shake from Kling clips)
+    parser.add_argument(
+        "--stabilize",
+        action="store_true",
+        help="Apply two-pass vidstab stabilization to each clip before assembly (removes Kling camera shake)"
     )
 
     # Smoke test — generates a 3-minute video to test the full pipeline
