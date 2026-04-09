@@ -146,25 +146,42 @@ def _extract_text_from_metadata(metadata: dict) -> tuple[str, str]:
 
     Headline: Claude-chosen keyword phrase from metadata["thumbnail_text"]
               (e.g. "STUDY MUSIC", "DEEP FOCUS") — optimized for click-through.
-    Subtitle: mood/genre extracted from the title.
+    Subtitle: Scene anchor extracted from the title (e.g. "Dew-Soaked Fairway",
+              "Golden Hour Links") — gives the thumbnail context beyond the keyword.
 
     Returns:
         (headline, subtitle)
     """
     if not metadata:
-        return "LOFI GOLF", "Fairway Frequencies"
+        return "LOFI GOLF", "Golf Course Vibes"
 
     # Use Claude's chosen thumbnail keyword phrase as the headline
     headline = metadata.get("thumbnail_text", "").strip().upper()
     if not headline:
         headline = "STUDY MUSIC"  # fallback
 
-    # Subtitle: extract mood/genre from title (part after "|")
+    # Subtitle: extract scene anchor from title.
+    # New title format: "[Use-case keyword] • [Scene anchor] ⛳ [Duration]"
+    # e.g. "Lofi Study Music • Dew-Soaked Fairway ⛳ 2 Hours"
     title = metadata.get("title", "")
-    subtitle = "Fairway Frequencies"
-    match = re.search(r"\|\s*(.+?)(?:\s*⛳.*)?$", title)
+    subtitle = ""
+
+    # Try new bullet-separator format first
+    match = re.search(r"•\s*(.+?)(?:\s*⛳.*)?$", title)
     if match:
         subtitle = match.group(1).strip().rstrip("⛳").strip()
+
+    # Fallback: try legacy pipe-separator format
+    if not subtitle:
+        match = re.search(r"\|\s*(.+?)(?:\s*[⛳|].*)?$", title)
+        if match:
+            candidate = match.group(1).strip().rstrip("⛳").strip()
+            # Skip if it looks like a duration ("2 Hours") or genre phrase
+            if not re.match(r"^\d+\s+hours?$", candidate, re.IGNORECASE):
+                subtitle = candidate
+
+    if not subtitle:
+        subtitle = "Golf Course Lofi"
 
     return headline, subtitle
 

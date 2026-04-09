@@ -68,6 +68,11 @@ BAR_GLOW_COLOR = (255, 255, 255)  # White glow to match
 BAR_ALPHA_MIN = 200        # Minimum alpha (even quiet bars are clearly visible)
 BAR_ALPHA_MAX = 255        # Maximum alpha (full opacity at peak volume)
 
+# Sensitivity multiplier — scales bar lengths before drawing.
+# >1.0 = more reactive (bars extend further for the same audio level).
+# Caps at 1.0 so bars never exceed the outer radius.
+SENSITIVITY = 1.2
+
 
 def render_golfquilizer(
     video_path: str,
@@ -326,7 +331,7 @@ def _draw_radial_bars(
         # then mirror back 23→0 from 6 o'clock to 12 o'clock.
         # Result: bass at top, treble at bottom, left = right.
         freq_idx = min(i, NUM_BARS - i) if i > 0 else 0
-        mag = magnitudes[freq_idx]
+        mag = min(magnitudes[freq_idx] * SENSITIVITY, 1.0)
 
         # Bar length: minimum + scaled by magnitude
         bar_length = BAR_MIN_LENGTH + int(mag * (max_bar_length - BAR_MIN_LENGTH))
