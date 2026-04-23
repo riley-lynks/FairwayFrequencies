@@ -339,7 +339,6 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
     include_ambience = not getattr(args, 'no_ambience', False) and config.INCLUDE_AMBIENCE
     character_mode = getattr(args, 'character', None) or config.INCLUDE_CHARACTER
     target_hours = getattr(args, 'duration', None) or config.TARGET_DURATION_HOURS
-    image_source = getattr(args, 'images', None) or config.IMAGE_SOURCE
 
     # Create subdirectories inside this run's folder
     clips_dir = os.path.join(run_dir, "clips")      # Raw video clips go here
@@ -706,7 +705,6 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
             thumbnail_path = generate_thumbnail(
                 base_image_path=base_image_path,
                 thumbnail_prompt=orchestration.get("thumbnail_prompt", orchestration["image_prompt"]),
-                image_source=image_source,
                 run_dir=run_dir,
                 output_dir=run_output_dir,
                 final_video_path=final_video_path,
@@ -1025,7 +1023,6 @@ def main():
         args.duration = 0.05          # 3 minutes (0.05 hours)
         args.no_ambience = False
         args.character = "never"      # Landscape only for speed
-        args.images = config.IMAGE_SOURCE
         prompt = "Sunny morning, classic parkland course, gentle hills, puffy clouds"
     elif args.random:
         # Ask Claude to generate a fresh seasonal scene for this month's art style

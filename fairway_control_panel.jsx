@@ -29,7 +29,7 @@ function getCurrentArtStyle() {
   return ART_STYLES[(month - 1) % 4];
 }
 
-// Short style suffix appended to MJ prompts — matches STYLE_SUFFIX in config.py
+// Short style suffix appended to Gemini prompts — matches STYLE_SUFFIX in config.py
 const STYLE_SUFFIX = `in the style of a detailed anime background painting, Studio Ghibli inspired, vibrant saturated colors, clean linework, lush detailed landscape, warm natural lighting, soft puffy clouds, visible brushstroke texture, concept art quality, 16:9 widescreen composition, no text, no UI elements`;
 
 // Character poses — added to prompts ~40% of the time (matches config.py CHARACTER_POSES)
@@ -53,9 +53,6 @@ const ANIMATION_VARIATIONS = [
   { prompt: "Tripod shot, fixed camera, no zoom, no camera movement. Flag waving softly in light breeze, grass swaying gently, soft ripples on water surface, flowers with subtle movement. Static background, original composition maintained.", negative_prompt: DEFAULT_NEGATIVE_PROMPT },
   { prompt: "Tripod shot, fixed camera, no zoom, no camera movement. Mostly still scene, single bird flying slowly across distant sky, very subtle atmospheric shimmer. Static background, original composition maintained.", negative_prompt: DEFAULT_NEGATIVE_PROMPT },
   { prompt: "Tripod shot, fixed camera, no zoom, no camera movement. Soft breeze through foliage, trees with gentle leaf flutter, flower petals drifting slowly through air. Static background, original composition maintained.", negative_prompt: DEFAULT_NEGATIVE_PROMPT },
-  { prompt: "Tripod shot, fixed camera, no zoom, no camera movement. Calm peaceful scene, water with gentle ripple animation, flag waving steadily, barely perceptible light shift. Static background, original composition maintained.", negative_prompt: DEFAULT_NEGATIVE_PROMPT },
-  { prompt: "Tripod shot, fixed camera, no zoom, no camera movement. Subtle breeze animation, grass rippling softly, leaves on trees shifting gently, small butterfly floating through foreground. Static background, original composition maintained.", negative_prompt: DEFAULT_NEGATIVE_PROMPT },
-  { prompt: "Tripod shot, fixed camera, no zoom, no camera movement. Very gentle overall scene breathing, soft atmospheric movement, flag gently waving, flowers swaying slightly. Static background, original composition maintained.", negative_prompt: DEFAULT_NEGATIVE_PROMPT },
 ];
 
 // Dot colors for the scene mood badges
@@ -124,8 +121,8 @@ function FairwayControlPanel() {
   const [includeCharacter, setIncludeCharacter] = useState("random");
   const [includeAmbience, setIncludeAmbience] = useState(true);
   const [duration, setDuration] = useState(2);
-  const [uploadToYoutube, setUploadToYoutube] = useState(true);
-  const [abTest, setAbTest] = useState(false);
+  const [uploadToYoutube, setUploadToYoutube] = useState(false);
+  const [abTest, setAbTest] = useState(true);
   const [stylize, setStylize] = useState(750);
   const [generatedPrompt, setGeneratedPrompt] = useState("");
   const [pipelineLog, setPipelineLog] = useState([]);
@@ -135,7 +132,7 @@ function FairwayControlPanel() {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [logExpanded, setLogExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [klingPrompts, setKlingPrompts] = useState([]);   // 6 Kling animation prompts
+  const [klingPrompts, setKlingPrompts] = useState([]);   // 3 Kling animation prompts
   const [promptsLoading, setPromptsLoading] = useState(false); // waiting for server
   const [copiedKling, setCopiedKling] = useState(null);        // index | "all" | null
   const [klingNegativePrompt, setKlingNegativePrompt] = useState(""); // negative prompt (same for all clips)
@@ -143,9 +140,7 @@ function FairwayControlPanel() {
   const [promptSource, setPromptSource] = useState(null);             // "claude" | "local"
   const [klingClipSets, setKlingClipSets] = useState([]);       // available clip sets
   const [selectedClipSet, setSelectedClipSet] = useState(null); // chosen folder name ("" = root)
-  // Which AI tool the user will paste the image prompt into
-  // "chatgpt" = DALL·E 3 via ChatGPT | "kling" = Kling Image Gen | "midjourney" = Midjourney
-  const [imageGenTool, setImageGenTool] = useState("chatgpt");
+  const [imageGenTool] = useState("gemini");
 
   // Analytics state
   const [analyticsData, setAnalyticsData] = useState(null);
@@ -349,40 +344,24 @@ function FairwayControlPanel() {
   }, []);
 
   // ---------------------------------------------------------------------------
-  // GENERATE ALL PROMPTS — Midjourney (image) + Kling (6 animation clips)
+  // GENERATE ALL PROMPTS — Gemini (image) + Kling (3 animation clips)
   // ---------------------------------------------------------------------------
   // HOW IT WORKS:
   //   1. POST /api/generate-prompt → server uses Claude (if key set) or local
   //      fallback to build a full orchestration object
-  //   2. Response gives us: image_prompt (Midjourney) + base_video_prompt +
-  //      animation_variations (6 Kling clip prompts)
+  //   2. Response gives us: image_prompt (Gemini) + base_video_prompt +
+  //      animation_variations (3 Kling clip prompts)
   //   3. If the server is unreachable, fall back entirely to local generation
   // ---------------------------------------------------------------------------
-  // formatImagePrompt — wraps a raw scene prompt for the selected image tool
-  // ---------------------------------------------------------------------------
-  // raw:    the clean scene description returned by Claude / local fallback
-  // tool:   "chatgpt" | "kling" | "midjourney"
-  // sVal:   stylize value (only used for midjourney)
-  const formatImagePrompt = useCallback((raw, tool, sVal) => {
-    if (tool === "chatgpt") {
-      return (
-        `Create a 16:9 widescreen digital illustration: ${raw}. ` +
-        `Art style: detailed anime background painting, Studio Ghibli inspired, ` +
-        `vibrant saturated colors, clean linework, lush detailed landscape, ` +
-        `warm natural lighting, soft puffy clouds, visible brushstroke texture, ` +
-        `concept art quality. No text, no logos, no UI elements, no watermarks.`
-      );
-    }
-    if (tool === "kling") {
-      return (
-        `${raw}, ` +
-        `anime background painting style, Studio Ghibli inspired, vibrant saturated colors, ` +
-        `clean linework, warm natural lighting, soft puffy clouds, ` +
-        `16:9 widescreen landscape composition, concept art quality, no text, no UI elements`
-      );
-    }
-    // midjourney (default)
-    return `${raw} --ar 16:9 --v 7 --s ${sVal}`;
+  // formatImagePrompt — wraps a raw scene prompt for Google Gemini
+  const formatImagePrompt = useCallback((raw) => {
+    return (
+      `Create a 16:9 widescreen digital illustration: ${raw}. ` +
+      `Art style: detailed anime background painting, Studio Ghibli inspired, ` +
+      `vibrant saturated colors, clean linework, lush detailed landscape, ` +
+      `warm natural lighting, soft puffy clouds, visible brushstroke texture, ` +
+      `concept art quality. No text, no logos, no UI elements, no watermarks.`
+    );
   }, []);
 
   const generateMJPrompt = useCallback(async (overrideDesc = null) => {
@@ -417,12 +396,12 @@ function FairwayControlPanel() {
       // for whichever tool is selected (ChatGPT / Kling / Midjourney).
       const orch = data.orchestration || {};
       const rawPrompt = orch.image_prompt || data.mj_prompt || `Elevated wide view of a ${sceneDesc}, ${STYLE_SUFFIX}`;
-      imagePrompt = formatImagePrompt(rawPrompt, imageGenTool, stylize);
+      imagePrompt = formatImagePrompt(rawPrompt);
 
       // Animation variations are now objects { prompt, negative_prompt }.
       // Extract the positive prompts for display; the negative prompt is shared.
       const variations = orch.animation_variations || ANIMATION_VARIATIONS;
-      klingPromptsArr = variations.slice(0, 6).map(v =>
+      klingPromptsArr = variations.slice(0, 3).map(v =>
         typeof v === 'object' ? v.prompt : v
       );
       // Negative prompt is the same for every clip — grab from first entry
@@ -440,7 +419,7 @@ function FairwayControlPanel() {
         charDesc = CHARACTER_OPTIONS[Math.floor(Math.random() * CHARACTER_OPTIONS.length)] + ", ";
       }
       const rawLocal = `${charDesc}Elevated wide view of a ${sceneDesc}, ${STYLE_SUFFIX}`;
-      imagePrompt = formatImagePrompt(rawLocal, imageGenTool, stylize);
+      imagePrompt = formatImagePrompt(rawLocal);
       klingPromptsArr = ANIMATION_VARIATIONS.map(v =>
         typeof v === 'object' ? v.prompt : `${sceneDesc}. ${v}`
       );
@@ -452,7 +431,7 @@ function FairwayControlPanel() {
     setKlingPrompts(klingPromptsArr);
     setPromptSource(source);
     setPromptsLoading(false);
-  }, [prompt, includeCharacter, stylize, imageGenTool, formatImagePrompt]);
+  }, [prompt, includeCharacter, stylize, formatImagePrompt]);
 
   const copyPrompt = useCallback(() => {
     navigator.clipboard.writeText(generatedPrompt);
@@ -525,7 +504,7 @@ function FairwayControlPanel() {
       no_ambience: !includeAmbience,
       character: includeCharacter,
       scene: prompt,
-      clips_folder: selectedClipSet,     // which kling_clips subfolder to use
+      clips_folder: selectedClipSet,     // which video_clips subfolder to use
       upload: uploadToYoutube,
       ab_test: abTest,
     };
@@ -711,37 +690,23 @@ function FairwayControlPanel() {
             />
           </div>
 
-          {/* ── Image generation tool selector ───────────────────────── */}
+          {/* ── Image generation tool ────────────────────────────────── */}
           <div style={{ marginBottom: 20 }}>
             <label style={{ fontSize: 11, fontWeight: 600, color: "var(--color-text-secondary)", letterSpacing: 0.5 }}>
               IMAGE GENERATION TOOL
             </label>
             <div style={{
-              display: "flex", marginTop: 6, borderRadius: 8, overflow: "hidden",
-              border: "1px solid var(--color-border-tertiary)",
+              marginTop: 6, padding: "9px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600,
+              border: "1px solid var(--color-border-tertiary)", background: "#2D6A4F", color: "#fff",
             }}>
-              {[
-                { id: "chatgpt",    label: "ChatGPT / DALL·E" },
-                { id: "kling",      label: "Kling Image Gen"  },
-                { id: "midjourney", label: "Midjourney"       },
-              ].map((tool, idx, arr) => (
-                <button key={tool.id} onClick={() => setImageGenTool(tool.id)} style={{
-                  flex: 1, padding: "9px 0", fontSize: 13, fontWeight: imageGenTool === tool.id ? 600 : 400,
-                  border: "none", borderRight: idx < arr.length - 1 ? "1px solid var(--color-border-tertiary)" : "none",
-                  cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s",
-                  background: imageGenTool === tool.id ? "#2D6A4F" : "var(--color-background-secondary)",
-                  color: imageGenTool === tool.id ? "#fff" : "var(--color-text-secondary)",
-                }}>
-                  {tool.label}
-                </button>
-              ))}
+              Google Gemini
             </div>
           </div>
 
-          {/* Settings row — Stylize shown only for Midjourney */}
+          {/* Settings row */}
           <div style={{
             display: "grid",
-            gridTemplateColumns: imageGenTool === "midjourney" ? "1fr 1fr 1fr 1fr 1fr" : "1fr 1fr 1fr 1fr",
+            gridTemplateColumns: "1fr 1fr 1fr 1fr",
             gap: 16, marginBottom: 24,
           }}>
             <div>
@@ -806,21 +771,6 @@ function FairwayControlPanel() {
                 </span>
               </div>
             </div>
-            {imageGenTool === "midjourney" && (
-              <div>
-                <label style={{ fontSize: 11, fontWeight: 600, color: "var(--color-text-secondary)" }}>STYLIZE (--s)</label>
-                <select value={stylize} onChange={e => setStylize(Number(e.target.value))}
-                  style={{ width: "100%", marginTop: 4, padding: "8px 10px", fontSize: 13, borderRadius: 6,
-                    border: "1px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)",
-                    color: "var(--color-text-primary)", fontFamily: "inherit" }}>
-                  <option value={500}>--s 500 (more grounded)</option>
-                  <option value={600}>--s 600</option>
-                  <option value={750}>--s 750 (default)</option>
-                  <option value={850}>--s 850</option>
-                  <option value={900}>--s 900 (more anime)</option>
-                </select>
-              </div>
-            )}
           </div>
 
           {/* Generate prompts button — calls server to get MJ + Kling prompts */}
@@ -842,10 +792,7 @@ function FairwayControlPanel() {
             <div style={{ marginTop: 20 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: "#B08D57", letterSpacing: 1 }}>
-                  STEP 1 —{" "}
-                  {imageGenTool === "chatgpt"    && "CHATGPT / DALL·E 3 IMAGE PROMPT"}
-                  {imageGenTool === "kling"      && "KLING IMAGE GEN PROMPT"}
-                  {imageGenTool === "midjourney" && "MIDJOURNEY PROMPT"}
+                  STEP 1 — GOOGLE GEMINI IMAGE PROMPT
                 </div>
                 {promptSource && (
                   <div style={{
@@ -860,9 +807,7 @@ function FairwayControlPanel() {
 
               <div style={{ background: "#1B4332", borderRadius: 10, padding: 20 }}>
                 <div style={{ fontSize: 11, color: "#B08D57", marginBottom: 8, letterSpacing: 0.5 }}>
-                  {imageGenTool === "chatgpt"    && "Paste into ChatGPT → DALL·E image generation"}
-                  {imageGenTool === "kling"      && "Paste into app.klingai.com → AI Images → Text to Image · 16:9"}
-                  {imageGenTool === "midjourney" && "Copy & paste into Midjourney /imagine"}
+                  Paste into Gemini → Generate image · 16:9
                 </div>
                 <div style={{ fontSize: 13, color: "#D8F3DC", lineHeight: 1.7, fontFamily: "'DM Mono', monospace", wordBreak: "break-word" }}>
                   {generatedPrompt}
@@ -900,7 +845,7 @@ function FairwayControlPanel() {
                   color: copiedKling === 'all' ? "#fff" : "#B08D57",
                   transition: "all 0.2s"
                 }}>
-                  {copiedKling === 'all' ? "✓ Copied all!" : "Copy all 6"}
+                  {copiedKling === 'all' ? "✓ Copied all!" : "Copy all 3"}
                 </button>
               </div>
 

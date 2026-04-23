@@ -62,22 +62,6 @@ STYLE_SUFFIX = (
 )
 
 # =============================================================================
-# IMAGE GENERATION — Which path to use
-# =============================================================================
-# "midjourney" = YOU generate images in Midjourney and drop them in
-#                assets/midjourney_images/. Best quality for this art style.
-#                The pipeline will print the exact Midjourney prompt to copy.
-#
-# "flux"       = Fully automated. Pipeline calls Black Forest Labs' Flux 2 API.
-#                Slightly lower quality for this art style, but hands-off.
-#
-# WHY separate paths? Midjourney still produces the best anime/Ghibli
-# landscapes of any AI image tool. But it requires manual steps. Flux
-# is almost as good and runs while you sleep.
-
-IMAGE_SOURCE = "midjourney"  # "midjourney" or "flux"
-
-# =============================================================================
 # CHARACTER FIGURE — Lofi Girl-style foreground character
 # =============================================================================
 # Controls whether a figure appears in the foreground of the scene.
@@ -151,7 +135,7 @@ VIDEO_CLIPS_DIR = "./assets/video_clips/"  # Where you save your generated clips
 # between clips are nearly invisible — the composition is identical, only
 # the animation differs. This creates the illusion of one endless, living painting.
 
-NUM_ANIMATION_CLIPS = 6   # How many Kling clips to generate (and how many prompts
+NUM_ANIMATION_CLIPS = 3   # How many Kling clips to generate (and how many prompts
                            # --prompts-only prints). More clips = more variety in
                            # the loop. 6 is a good balance of variety vs. effort.
 
@@ -208,33 +192,6 @@ ANIMATION_VARIATIONS = [
             "Tripod shot, fixed camera, no zoom, no camera movement. "
             "Soft breeze through foliage, trees with gentle leaf flutter, "
             "flower petals drifting slowly through air. "
-            "Static background, original composition maintained."
-        ),
-        "negative_prompt": DEFAULT_NEGATIVE_PROMPT,
-    },
-    {
-        "prompt": (
-            "Tripod shot, fixed camera, no zoom, no camera movement. "
-            "Calm peaceful scene, water with gentle ripple animation, "
-            "flag waving steadily, barely perceptible light shift. "
-            "Static background, original composition maintained."
-        ),
-        "negative_prompt": DEFAULT_NEGATIVE_PROMPT,
-    },
-    {
-        "prompt": (
-            "Tripod shot, fixed camera, no zoom, no camera movement. "
-            "Subtle breeze animation, grass rippling softly, "
-            "leaves on trees shifting gently, small butterfly floating through foreground. "
-            "Static background, original composition maintained."
-        ),
-        "negative_prompt": DEFAULT_NEGATIVE_PROMPT,
-    },
-    {
-        "prompt": (
-            "Tripod shot, fixed camera, no zoom, no camera movement. "
-            "Very gentle overall scene breathing, soft atmospheric movement, "
-            "flag gently waving, flowers swaying slightly. "
             "Static background, original composition maintained."
         ),
         "negative_prompt": DEFAULT_NEGATIVE_PROMPT,

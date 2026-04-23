@@ -1,2 +1,0 @@
-# Place your Midjourney-generated images (.png or .jpg) in this folder.
-# The pipeline will automatically find them when IMAGE_SOURCE = "midjourney" in config.py

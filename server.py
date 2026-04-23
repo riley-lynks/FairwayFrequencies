@@ -27,12 +27,10 @@ import json         # JSON responses
 import uuid         # Unique run IDs
 import threading    # Background pipeline execution
 import subprocess   # Running fairway.py as a subprocess
-import glob         # Finding image files
-import shutil       # File operations
+import glob         # Finding output files
 import time         # Timestamps
 import re           # Parsing log messages
 from datetime import datetime
-from pathlib import Path
 
 # Flask — the web server library
 # Install with: pip install flask flask-cors
@@ -94,123 +92,6 @@ def serve_jsx():
     """Serve the React component JSX file. Babel in the browser compiles it."""
     return send_from_directory(PROJECT_ROOT, "fairway_control_panel.jsx",
                                mimetype="text/plain")  # Browser's Babel handles JSX
-
-
-# =============================================================================
-# IMAGE API ENDPOINTS
-# =============================================================================
-
-@app.route("/api/images", methods=["GET"])
-def list_images():
-    """
-    Return a list of images currently in assets/midjourney_images/.
-
-    The UI calls this on load to show existing images.
-
-    Returns:
-        JSON: { images: [{ filename, size_mb, date }] }
-    """
-    images_dir = os.path.join(PROJECT_ROOT, "assets", "midjourney_images")
-    os.makedirs(images_dir, exist_ok=True)
-
-    images = []
-    seen = set()  # tracks filenames already added (case-insensitive on Windows)
-
-    for ext in ["*.png", "*.jpg", "*.jpeg", "*.webp", "*.PNG", "*.JPG"]:
-        for filepath in glob.glob(os.path.join(images_dir, ext)):
-            filename = os.path.basename(filepath)
-            if filename == ".gitkeep":
-                continue
-            # On Windows, glob("*.png") and glob("*.PNG") both match "photo.png"
-            # because the filesystem is case-insensitive. Skip if already added.
-            if filename.lower() in seen:
-                continue
-            seen.add(filename.lower())
-            stat = os.stat(filepath)
-            images.append({
-                "filename": filename,
-                "size_mb": round(stat.st_size / (1024 * 1024), 1),
-                "date": datetime.fromtimestamp(stat.st_mtime).strftime("%b %d, %Y"),
-                "url": f"/api/images/preview/{filename}",
-            })
-
-    # Sort by modification time, newest first
-    images.sort(key=lambda x: x["date"], reverse=True)
-    return jsonify({"images": images})
-
-
-@app.route("/api/images/preview/<filename>")
-def preview_image(filename):
-    """Serve an image file from the midjourney_images folder for preview in the UI."""
-    images_dir = os.path.join(PROJECT_ROOT, "assets", "midjourney_images")
-    return send_from_directory(images_dir, filename)
-
-
-@app.route("/api/upload-image", methods=["POST"])
-def upload_image():
-    """
-    Receive an uploaded image and save it to assets/midjourney_images/.
-
-    The browser sends the image file as a multipart form upload.
-    We save it with its original filename (sanitized for safety).
-
-    Returns:
-        JSON: { success: true, filename: "...", size_mb: ... }
-    """
-    if "image" not in request.files:
-        return jsonify({"success": False, "error": "No image file in request"}), 400
-
-    file = request.files["image"]
-
-    if not file.filename:
-        return jsonify({"success": False, "error": "Empty filename"}), 400
-
-    # Sanitize filename — remove anything that could be a path traversal attack
-    # WHY: Never trust user-supplied filenames directly. "../../etc/passwd" would be bad.
-    safe_filename = Path(file.filename).name
-    # Only allow image extensions
-    ext = os.path.splitext(safe_filename)[1].lower()
-    if ext not in [".png", ".jpg", ".jpeg", ".webp"]:
-        return jsonify({"success": False, "error": "Only PNG/JPG/WEBP images allowed"}), 400
-
-    images_dir = os.path.join(PROJECT_ROOT, "assets", "midjourney_images")
-    os.makedirs(images_dir, exist_ok=True)
-
-    save_path = os.path.join(images_dir, safe_filename)
-    file.save(save_path)
-
-    size_mb = round(os.path.getsize(save_path) / (1024 * 1024), 1)
-    app.logger.info(f"Image uploaded: {safe_filename} ({size_mb}MB)")
-
-    return jsonify({
-        "success": True,
-        "filename": safe_filename,
-        "size_mb": size_mb,
-        "url": f"/api/images/preview/{safe_filename}",
-    })
-
-
-@app.route("/api/images/<filename>", methods=["DELETE"])
-def delete_image(filename):
-    """
-    Delete an image from assets/midjourney_images/.
-
-    Args:
-        filename: The image filename to delete.
-
-    Returns:
-        JSON: { success: true }
-    """
-    # Sanitize to prevent path traversal
-    safe_filename = Path(filename).name
-    image_path = os.path.join(PROJECT_ROOT, "assets", "midjourney_images", safe_filename)
-
-    if not os.path.exists(image_path):
-        return jsonify({"success": False, "error": "File not found"}), 404
-
-    os.remove(image_path)
-    app.logger.info(f"Image deleted: {safe_filename}")
-    return jsonify({"success": True})
 
 
 # =============================================================================
@@ -287,41 +168,6 @@ def generate_prompt_api():
 
 
 # =============================================================================
-# KLING CLIPS API
-# =============================================================================
-
-@app.route("/api/kling-clips", methods=["GET"])
-def list_kling_clips():
-    """
-    Return all available Kling clip sets from assets/kling_clips/.
-
-    A clip set is either a named subfolder (e.g. assets/kling_clips/misty_dawn/)
-    or the root folder itself if it contains .mp4 files directly.
-
-    Returns:
-        JSON: {
-            sets: [
-                { name: "misty_dawn", count: 6, label: "misty_dawn (6 clips)" },
-                { name: "",           count: 3, label: "Root folder (3 clips)" },
-            ]
-        }
-    """
-    from pipeline.video_import import list_clip_sets
-    sets = list_clip_sets()
-
-    result = []
-    for s in sets:
-        label = s["name"] if s["name"] else "Root folder"
-        result.append({
-            "name": s["name"],
-            "count": s["count"],
-            "label": f"{label} ({s['count']} clip{'s' if s['count'] != 1 else ''})",
-        })
-
-    return jsonify({"sets": result})
-
-
-# =============================================================================
 # PIPELINE EXECUTION API
 # =============================================================================
 
@@ -360,26 +206,10 @@ def run_pipeline():
     upload = bool(data.get("upload") or False)
     ab_test = bool(data.get("ab_test") or False)
     character = data.get("character") or config.INCLUDE_CHARACTER
-    image_source = data.get("images") or config.IMAGE_SOURCE
-    image_filename = (data.get("image_filename") or "").strip()
     clips_folder  = (data.get("clips_folder")   or "").strip()
 
     if not scene:
         return jsonify({"error": "No scene description provided"}), 400
-
-    # Check if an image is available (required for the pipeline)
-    images_dir = os.path.join(PROJECT_ROOT, "assets", "midjourney_images")
-    available_images = [
-        f for f in glob.glob(os.path.join(images_dir, "*"))
-        if not f.endswith(".gitkeep") and
-        os.path.splitext(f)[1].lower() in [".png", ".jpg", ".jpeg", ".webp"]
-    ]
-
-    if image_source == "midjourney" and not available_images:
-        return jsonify({
-            "error": "No images in assets/midjourney_images/. "
-                     "Upload an image first, or switch to Flux (images: 'flux')."
-        }), 400
 
     # Create a unique ID for this run
     run_id = uuid.uuid4().hex[:8]
@@ -397,11 +227,6 @@ def run_pipeline():
     cmd = [PYTHON, "-X", "utf8", "fairway.py", scene,
            "--duration", str(duration)]
 
-    # Pass the specific image filename if the user selected one in the UI.
-    # Without this, fairway.py would just pick the most recently modified image.
-    if image_filename:
-        cmd.extend(["--image", image_filename])
-
     if clips_folder:
         cmd.extend(["--clips-folder", clips_folder])
 
@@ -410,9 +235,6 @@ def run_pipeline():
 
     if character != "random":
         cmd.extend(["--character", character])
-
-    if image_source == "flux":
-        cmd.extend(["--images", "flux"])
 
     if not upload:
         cmd.append("--no-upload")
@@ -636,8 +458,6 @@ def api_status():
             "freesound": bool(config.FREESOUND_API_KEY),
         },
         "ffmpeg": bool(_shutil.which("ffmpeg")),
-        "image_source": config.IMAGE_SOURCE,
-        "kling_clips_dir": config.VIDEO_CLIPS_DIR,
     })
 
 
@@ -795,8 +615,8 @@ if __name__ == "__main__":
     print(f"    BFL/Flux:   {'OK' if config.BFL_API_KEY else '- (optional)'}")
     print(f"    Mubert:     {'OK' if config.MUBERT_API_KEY else '- (optional)'}")
     print(f"    Freesound:  {'OK' if config.FREESOUND_API_KEY else '- (optional)'}")
-    print(f"\n  Kling clips folder: {config.VIDEO_CLIPS_DIR}")
-    print(f"    (generate clips at app.klingai.com, save .mp4s here)")
+    print(f"\n  Video clips folder: {config.VIDEO_CLIPS_DIR}")
+    print(f"    (animate in Kling, save .mp4s to a subfolder here)")
     print(f"\n  Open your browser to: http://localhost:5000")
     print("=" * 60 + "\n")
 

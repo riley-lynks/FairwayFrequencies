@@ -20,8 +20,6 @@ logs/*
 !logs/.gitkeep
 
 # Large asset files — keep folder structure via .gitkeep files
-assets/midjourney_images/*
-!assets/midjourney_images/.gitkeep
 assets/music/*
 !assets/music/.gitkeep
 !assets/music/HipHop
@@ -34,8 +32,6 @@ assets/sounds/*
 !assets/sounds/.gitkeep
 assets/video_clips/*
 !assets/video_clips/.gitkeep
-assets/kling_clips/*
-!assets/kling_clips/.gitkeep
 
 # Python virtual environment
 venv/

@@ -43,7 +43,6 @@ _FONT_PATHS = [
 def generate_thumbnail(
     base_image_path: str,
     thumbnail_prompt: str,
-    image_source: str,
     run_dir: str,
     output_dir: str,
     final_video_path: str,
@@ -57,7 +56,6 @@ def generate_thumbnail(
     Args:
         base_image_path:   Path to the base image used for the video.
         thumbnail_prompt:  Thumbnail image prompt (used if generating fresh image).
-        image_source:      "midjourney" or "flux" — which image path was used.
         run_dir:           Current run directory.
         output_dir:        Final output directory (thumbnail saved here).
         final_video_path:  Path to the final video (thumbnail uses same base name).
