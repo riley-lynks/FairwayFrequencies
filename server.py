@@ -95,6 +95,26 @@ def serve_jsx():
 
 
 # =============================================================================
+# VIDEO CLIPS API
+# =============================================================================
+
+@app.route("/api/kling-clips", methods=["GET"])
+def list_video_clip_sets():
+    """Return all clip set subfolders found in assets/video_clips/."""
+    from pipeline.video_import import list_clip_sets
+    sets = list_clip_sets()
+    result = []
+    for s in sets:
+        label = s["name"] if s["name"] else "Root folder"
+        result.append({
+            "name": s["name"],
+            "count": s["count"],
+            "label": f"{label} ({s['count']} clip{'s' if s['count'] != 1 else ''})",
+        })
+    return jsonify({"sets": result})
+
+
+# =============================================================================
 # PROMPT GENERATION API
 # =============================================================================
 
