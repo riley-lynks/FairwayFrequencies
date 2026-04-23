@@ -157,7 +157,7 @@ def upload_to_youtube(
     # Calculate the optimal publish time (next Thu or Fri at 7pm EST)
     publish_at = next_optimal_publish_time()
     publish_at_str = publish_at.strftime("%Y-%m-%dT%H:%M:%S%z")
-    publish_day = publish_at.strftime("%A %B %-d at %I:%M%p EST")
+    publish_day = publish_at.strftime("%A %B {day} at %I:%M%p EST").format(day=publish_at.day)
 
     # Prepare the video metadata for the YouTube API
     # YouTube uses numeric category IDs — 10 = Music

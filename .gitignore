@@ -5,20 +5,37 @@
 .youtube_token.json
 .youtube_analytics_token.json
 
-# Generated output files (too large for git)
-output/
-runs/
-logs/
+# Generated output files (too large for git) — keep folder structure via .gitkeep
+output/*
+!output/.gitkeep
+!output/shorts
+!output/archive
+output/shorts/*
+!output/shorts/.gitkeep
+output/archive/*
+!output/archive/.gitkeep
+runs/*
+!runs/.gitkeep
+logs/*
+!logs/.gitkeep
 
 # Large asset files — keep folder structure via .gitkeep files
 assets/midjourney_images/*
 !assets/midjourney_images/.gitkeep
 assets/music/*
 !assets/music/.gitkeep
+!assets/music/HipHop
+!assets/music/Jazz
+assets/music/HipHop/*
+!assets/music/HipHop/.gitkeep
+assets/music/Jazz/*
+!assets/music/Jazz/.gitkeep
 assets/sounds/*
 !assets/sounds/.gitkeep
 assets/video_clips/*
 !assets/video_clips/.gitkeep
+assets/kling_clips/*
+!assets/kling_clips/.gitkeep
 
 # Python virtual environment
 venv/
@@ -34,6 +51,12 @@ venv/
 __pycache__/
 *.pyc
 *.pyo
+
+# Test/scratch videos
+test_*.mp4
+
+# Companion projects (separate repos)
+LoFi Youtube Channel Analyst/
 
 # OS junk
 .DS_Store
