@@ -208,33 +208,7 @@ def _month_to_season(month: int) -> str:
 
 
 def load_system_prompt(art_style: dict = None) -> str:
-    """
-    Load the orchestrator system prompt from the prompts/ directory.
-
-    WHY a separate file? Keeping prompts in .txt files makes them easy to
-    edit without touching Python code. You can tweak the art direction
-    instructions without worrying about breaking any code.
-
-    Returns:
-        The system prompt as a string, with the STYLE_SUFFIX substituted in.
-    """
-    prompt_path = os.path.join("prompts", "orchestrator_system.txt")
-
-    if not os.path.exists(prompt_path):
-        # If the file is missing, fall back to the inline default
-        logger.warning(
-            f"  ⚠️ System prompt file not found at {prompt_path}. "
-            "Using inline fallback prompt."
-        )
-        return _get_inline_system_prompt()
-
-    with open(prompt_path, "r", encoding="utf-8") as f:
-        prompt_text = f.read()
-
-    style = art_style or get_current_art_style()
-    prompt_text = prompt_text.replace("{STYLE_SUFFIX}", style["style_suffix"])
-    prompt_text = prompt_text.replace("{ART_DIRECTION}", style["art_direction"])
-    return prompt_text
+    return _get_inline_system_prompt()
 
 
 def _get_inline_system_prompt() -> str:

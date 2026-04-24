@@ -98,12 +98,7 @@ def generate_metadata(
     stamps = _chapter_timestamps(duration_hours)
     timestamps_str = ", ".join(ts for _, ts in stamps)
 
-    # Load the metadata system prompt
-    try:
-        with open("prompts/metadata_system.txt", "r", encoding="utf-8") as f:
-            system_prompt = f.read()
-    except FileNotFoundError:
-        system_prompt = _get_inline_metadata_prompt()
+    system_prompt = _get_inline_metadata_prompt()
 
     # Map raw genre keys to human-readable display names for Claude
     _GENRE_DISPLAY = {"jazz": "Jazz", "hiphop": "Hip-Hop", "hip-hop": "Hip-Hop"}
