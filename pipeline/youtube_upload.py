@@ -105,6 +105,14 @@ def next_optimal_publish_time(
         except Exception:
             pass  # Tracker unreadable — proceed without it
 
+    # Find the nearest future Sunday (the "expected" slot with no conflicts)
+    nearest_sunday = None
+    for days_ahead in range(8):
+        candidate = now + timedelta(days=days_ahead)
+        if candidate.weekday() == 6 and candidate > now:
+            nearest_sunday = candidate.replace(hour=target_hour, minute=0, second=0, microsecond=0)
+            break
+
     for days_ahead in range(90):  # Look up to ~3 months ahead
         candidate = now + timedelta(days=days_ahead)
         if candidate.weekday() == 6:  # Sunday
@@ -113,6 +121,17 @@ def next_optimal_publish_time(
             )
             d = publish_dt.date()
             if publish_dt > now and d not in booked_dates and d not in scene_blocked_dates:
+                if nearest_sunday and publish_dt.date() != nearest_sunday.date():
+                    reasons = []
+                    if nearest_sunday.date() in booked_dates:
+                        reasons.append("another video is already booked that Sunday")
+                    if nearest_sunday.date() in scene_blocked_dates:
+                        reasons.append("AB spacing rule (same scene released recently)")
+                    reason_str = " and ".join(reasons) if reasons else "scheduling conflict"
+                    logger.warning(
+                        f"  ⚠ Scheduled for {publish_dt.strftime('%B %-d')} — pushed past "
+                        f"{nearest_sunday.strftime('%B %-d')} because: {reason_str}"
+                    )
                 return publish_dt
 
     # Fallback: 7 days from now at 9am (should never hit this)
