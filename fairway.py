@@ -57,8 +57,14 @@ from pipeline.audio_assembly import assemble_audio
 from pipeline.final_render import render_final_video
 from pipeline.metadata_gen import generate_metadata
 from pipeline.thumbnail_gen import generate_thumbnail
-from pipeline.youtube_upload import upload_to_youtube
+from pipeline.youtube_upload import upload_to_youtube, list_channel_playlists
 from pipeline.shorts_gen import generate_shorts as generate_shorts_stage
+from pipeline.shorts_scheduler import (
+    schedule_weeks, seed_tracker, print_tracker_summary,
+    backfill_video_links, print_backfill_report,
+    import_channel_videos, print_import_report,
+    reset_scheduled_shorts,
+)
 from pipeline.scene_tracker import log_scene_use
 
 
@@ -726,6 +732,12 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
         if getattr(args, 'upload', False):
             logger.info("━" * 60)
             logger.info(f"[Stage 10] Uploading to YouTube{tag}...")
+            v_stem = os.path.splitext(os.path.basename(final_video_path))[0]
+            stem_prefix = v_stem
+            for _suffix in ("_jazz", "_hiphop"):
+                if stem_prefix.endswith(_suffix):
+                    stem_prefix = stem_prefix[: -len(_suffix)]
+                    break
             upload_to_youtube(
                 video_path=final_video_path,
                 thumbnail_path=thumbnail_path,
@@ -733,6 +745,11 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
                 client_id=config.YOUTUBE_CLIENT_ID,
                 client_secret=config.YOUTUBE_CLIENT_SECRET,
                 logger=logger,
+                video_stem=v_stem,
+                scene_stem_prefix=stem_prefix,
+                genre=genre,
+                scene_prompt=prompt,
+                playlists=config.YOUTUBE_PLAYLISTS,
             )
             logger.info("  ✓ Upload complete")
         else:
@@ -949,6 +966,74 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--schedule-shorts",
+        dest="schedule_shorts",
+        action="store_true",
+        help="Seed the shorts tracker and schedule the next 4 weeks of shorts to YouTube",
+    )
+
+    parser.add_argument(
+        "--weeks",
+        type=int,
+        default=4,
+        metavar="N",
+        help="Weeks of shorts to schedule — applies to --schedule-shorts and the auto-schedule after --upload (default: 4)",
+    )
+
+    parser.add_argument(
+        "--dry-run",
+        dest="dry_run",
+        action="store_true",
+        help="With --schedule-shorts: preview the schedule without uploading anything",
+    )
+
+    parser.add_argument(
+        "--shorts-status",
+        dest="shorts_status",
+        action="store_true",
+        help="Print a summary of the shorts tracker and exit",
+    )
+
+    parser.add_argument(
+        "--reset-tracker",
+        dest="reset_tracker",
+        action="store_true",
+        help=(
+            "Reset all scheduled shorts back to 'unused' in the tracker. "
+            "Run this after deleting the corresponding YouTube videos."
+        ),
+    )
+
+    parser.add_argument(
+        "--backfill",
+        dest="backfill",
+        action="store_true",
+        help=(
+            "Match existing video_tracker.json entries to archive folders by title, "
+            "then link their shorts. Use --dry-run to preview without saving."
+        ),
+    )
+
+    parser.add_argument(
+        "--import-videos",
+        dest="import_videos",
+        action="store_true",
+        help=(
+            "Fetch all videos from your YouTube channel and import any missing ones "
+            "into video_tracker.json, linking them to archive folders. "
+            "Requires youtube.readonly OAuth (one-time browser login). "
+            "Use --dry-run to preview without saving."
+        ),
+    )
+
+    parser.add_argument(
+        "--list-playlists",
+        dest="list_playlists",
+        action="store_true",
+        help="Print all playlists on your YouTube channel with their IDs, then exit.",
+    )
+
+    parser.add_argument(
         "--resume",
         metavar="RUN_ID",
         help="Resume a failed run by its ID (e.g., 'runs/20260318_143201')"
@@ -986,6 +1071,101 @@ def main():
     5. Run the pipeline (or resume it)
     """
     args = parse_args()
+
+    # Handle --reset-tracker: reset all scheduled shorts back to unused
+    if getattr(args, 'reset_tracker', False):
+        logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s",
+                            datefmt="%H:%M:%S", stream=sys.stdout)
+        print("\n  Fairway Frequencies — Reset Shorts Tracker\n")
+        count = reset_scheduled_shorts()
+        print(f"  Reset {count} shorts back to 'unused'.")
+        print("  Run --shorts-status to verify.\n")
+        sys.exit(0)
+
+    # Handle --shorts-status: show tracker summary and exit
+    if getattr(args, 'shorts_status', False):
+        seed_tracker()
+        print_tracker_summary()
+        sys.exit(0)
+
+    # Handle --backfill: match archive folders to tracker entries by title
+    if getattr(args, 'backfill', False):
+        dry_run = getattr(args, 'dry_run', False)
+        logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s",
+                            datefmt="%H:%M:%S", stream=sys.stdout)
+        print(f"\n  Fairway Frequencies — {'DRY RUN — ' if dry_run else ''}Backfill Video Links\n")
+        results = backfill_video_links(dry_run=dry_run)
+        print_backfill_report(results)
+        if dry_run:
+            print("  Remove --dry-run to save the links.\n")
+        else:
+            matched = sum(1 for r in results if r.get("confidence", 0) >= 0.65)
+            print(f"  {matched}/{len(results)} videos linked. Run --shorts-status to verify.\n")
+        sys.exit(0)
+
+    # Handle --schedule-shorts: seed tracker + schedule + upload, then exit
+    if getattr(args, 'schedule_shorts', False):
+        weeks = getattr(args, 'weeks', 4)
+        dry_run = getattr(args, 'dry_run', False)
+        logging.basicConfig(
+            level=logging.INFO,
+            format="[%(asctime)s] %(message)s",
+            datefmt="%H:%M:%S",
+            stream=sys.stdout,
+        )
+        mode = "DRY RUN — " if dry_run else ""
+        print(f"\n  Fairway Frequencies — {mode}Shorts Scheduler")
+        print(f"  Scheduling {weeks} weeks of shorts...\n")
+        slots = schedule_weeks(
+            weeks_ahead=weeks,
+            client_id=config.YOUTUBE_CLIENT_ID,
+            client_secret=config.YOUTUBE_CLIENT_SECRET,
+            dry_run=dry_run,
+        )
+        print(f"\n  Done — {len(slots)} slots {'previewed' if dry_run else 'scheduled'}.")
+        if dry_run:
+            print("  Remove --dry-run to upload for real.\n")
+        sys.exit(0)
+
+    # Handle --list-playlists: print channel playlists for .env setup
+    if getattr(args, 'list_playlists', False):
+        logging.basicConfig(level=logging.WARNING, stream=sys.stdout)
+        if not config.YOUTUBE_CLIENT_ID or not config.YOUTUBE_CLIENT_SECRET:
+            print("  ✗ YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET must be set in .env")
+            sys.exit(1)
+        playlists = list_channel_playlists(config.YOUTUBE_CLIENT_ID, config.YOUTUBE_CLIENT_SECRET)
+        print("\n  Your YouTube channel playlists:\n")
+        for p in playlists:
+            print(f"  {p['id']}  {p['title']}")
+        print("\n  Add to your .env file:")
+        print("  YT_PLAYLIST_JAZZ=<id>")
+        print("  YT_PLAYLIST_HIPHOP=<id>")
+        print("  YT_PLAYLIST_MORNING=<id>")
+        print("  YT_PLAYLIST_EVENING=<id>\n")
+        sys.exit(0)
+
+    # Handle --import-videos: fetch channel videos from YouTube API
+    if getattr(args, 'import_videos', False):
+        dry_run = getattr(args, 'dry_run', False)
+        logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s",
+                            datefmt="%H:%M:%S", stream=sys.stdout)
+        print(f"\n  Fairway Frequencies — {'DRY RUN — ' if dry_run else ''}Import Channel Videos\n")
+        if not config.YOUTUBE_CLIENT_ID or not config.YOUTUBE_CLIENT_SECRET:
+            print("  ✗ YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET must be set in .env")
+            sys.exit(1)
+        results = import_channel_videos(
+            client_id=config.YOUTUBE_CLIENT_ID,
+            client_secret=config.YOUTUBE_CLIENT_SECRET,
+            dry_run=dry_run,
+        )
+        print_import_report(results)
+        if dry_run:
+            print("  Remove --dry-run to import for real.\n")
+        else:
+            linked = sum(1 for r in results if r.get("confidence", 0) >= 0.65)
+            print(f"  Imported {len(results)} videos, {linked} linked to archive folders.")
+            print("  Run --shorts-status to see the updated tracker.\n")
+        sys.exit(0)
 
     # Handle --list-scenes before doing anything else
     if args.list_scenes:
@@ -1079,6 +1259,24 @@ def main():
     # Run the full pipeline
     try:
         run_pipeline(prompt, args, run_dir, logger, state)
+
+        # Auto-schedule shorts after a successful upload
+        if getattr(args, 'upload', False):
+            weeks = getattr(args, 'weeks', 4)
+            logger.info("\n" + "━" * 60)
+            logger.info(f"  Auto-scheduling {weeks} weeks of shorts to YouTube...")
+            logger.info("━" * 60)
+            try:
+                slots = schedule_weeks(
+                    weeks_ahead=weeks,
+                    client_id=config.YOUTUBE_CLIENT_ID,
+                    client_secret=config.YOUTUBE_CLIENT_SECRET,
+                )
+                logger.info(f"  ✓ {len(slots)} shorts scheduled")
+            except Exception as e:
+                logger.warning(f"  ⚠ Shorts auto-scheduling failed: {e}")
+                logger.warning("  Run: python fairway.py --schedule-shorts to retry")
+
     except KeyboardInterrupt:
         logger.info(f"\n⚠️  Run interrupted. Resume with:")
         logger.info(f"  python fairway.py --resume {run_dir}")

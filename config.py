@@ -35,6 +35,15 @@ FREESOUND_API_KEY = os.getenv("FREESOUND_API_KEY")   # Freesound — ambient gol
 YOUTUBE_CLIENT_ID = os.getenv("YOUTUBE_CLIENT_ID")   # YouTube — auto-upload (optional)
 YOUTUBE_CLIENT_SECRET = os.getenv("YOUTUBE_CLIENT_SECRET")  # YouTube — auto-upload (optional)
 
+# YouTube playlist IDs — videos are added to these after upload.
+# Run: python fairway.py --list-playlists  to print your channel's playlist IDs.
+YOUTUBE_PLAYLISTS = {
+    "jazz":    os.getenv("YT_PLAYLIST_JAZZ"),
+    "hiphop":  os.getenv("YT_PLAYLIST_HIPHOP"),
+    "morning": os.getenv("YT_PLAYLIST_MORNING"),
+    "evening": os.getenv("YT_PLAYLIST_EVENING"),
+}
+
 # =============================================================================
 # ART STYLE — The Most Important Setting
 # =============================================================================

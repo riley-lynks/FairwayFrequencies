@@ -47,13 +47,16 @@ except ImportError:
     GOOGLE_LIBS_AVAILABLE = False
 
 # OAuth scopes required for YouTube upload
-YOUTUBE_SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+YOUTUBE_SCOPES = ["https://www.googleapis.com/auth/youtube"]
 
 # Where to store the OAuth token after first login
 TOKEN_FILE = ".youtube_token.json"
 
 
-def next_optimal_publish_time(tracker_file: str = "output/video_tracker.json") -> datetime:
+def next_optimal_publish_time(
+    tracker_file: str = "output/video_tracker.json",
+    scene_stem_prefix: str = None,
+) -> datetime:
     """
     Calculate the next optimal YouTube publish time, skipping already-booked slots.
 
@@ -63,8 +66,10 @@ def next_optimal_publish_time(tracker_file: str = "output/video_tracker.json") -
     indexes by the time the audience settles in, then accumulates watch time
     passively throughout the day as background music.
 
-    Checks the video tracker to avoid scheduling two videos on the same Sunday —
-    so running the pipeline back-to-back will spread videos across separate weeks.
+    Checks the video tracker to avoid scheduling two videos on the same Sunday.
+    When scene_stem_prefix is provided (e.g. the shared stem for jazz/hiphop AB
+    variants), also blocks any Sunday within 14 days of another video with that
+    same scene — keeping AB variants at least two weeks apart.
 
     Returns:
         A timezone-aware datetime for the next available Sunday at 9am EST.
@@ -73,37 +78,51 @@ def next_optimal_publish_time(tracker_file: str = "output/video_tracker.json") -
     now = datetime.now(est)
     target_hour = 9   # 9am EST
 
-    # Load already-scheduled future publish dates from the tracker
     booked_dates = set()
+    scene_blocked_dates = set()
+
     if os.path.exists(tracker_file):
         try:
             with open(tracker_file, "r") as f:
                 tracker = json.load(f)
             for entry in tracker:
                 pa = entry.get("publish_at")
-                if pa:
-                    # Parse just the date/time portion (timezone-safe across Python versions)
-                    dt = datetime.strptime(pa[:19], "%Y-%m-%dT%H:%M:%S")
-                    if dt > now.replace(tzinfo=None):
-                        booked_dates.add(dt.date())
+                if not pa:
+                    continue
+                dt = datetime.strptime(pa[:19], "%Y-%m-%dT%H:%M:%S")
+                if dt > now.replace(tzinfo=None):
+                    booked_dates.add(dt.date())
+
+                # Block Sundays within ±14 days of any same-scene variant
+                if scene_stem_prefix:
+                    stem = entry.get("video_stem", "")
+                    if stem and stem.startswith(scene_stem_prefix):
+                        anchor = dt.date()
+                        for offset in range(-14, 15):
+                            blocked = anchor + timedelta(days=offset)
+                            scene_blocked_dates.add(blocked)
         except Exception:
             pass  # Tracker unreadable — proceed without it
 
-    # Walk forward through Sunday slots until we find an open one
-    # Weekday numbers: 0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri, 5=Sat, 6=Sun
-    for days_ahead in range(60):  # Look up to ~2 months ahead
+    for days_ahead in range(90):  # Look up to ~3 months ahead
         candidate = now + timedelta(days=days_ahead)
         if candidate.weekday() == 6:  # Sunday
             publish_dt = candidate.replace(
                 hour=target_hour, minute=0, second=0, microsecond=0
             )
-            if publish_dt > now and publish_dt.date() not in booked_dates:
+            d = publish_dt.date()
+            if publish_dt > now and d not in booked_dates and d not in scene_blocked_dates:
                 return publish_dt
 
     # Fallback: 7 days from now at 9am (should never hit this)
     return (now + timedelta(days=7)).replace(
         hour=target_hour, minute=0, second=0, microsecond=0
     )
+
+
+def get_youtube_client(client_id: str, client_secret: str):
+    """Public wrapper so other modules (e.g. shorts_scheduler) can reuse auth."""
+    return _get_youtube_client(client_id, client_secret)
 
 
 def upload_to_youtube(
@@ -113,9 +132,14 @@ def upload_to_youtube(
     client_id: str,
     client_secret: str,
     logger: logging.Logger = None,
+    video_stem: str = None,
+    scene_stem_prefix: str = None,
+    genre: str = None,
+    scene_prompt: str = None,
+    playlists: dict = None,
 ) -> str:
     """
-    Upload the video to YouTube as an unlisted video.
+    Upload the video to YouTube as a private scheduled video.
 
     On first run, this will open a browser window for OAuth authentication.
     After that, the token is saved locally and reused automatically.
@@ -127,6 +151,11 @@ def upload_to_youtube(
         client_id:      YouTube OAuth client ID.
         client_secret:  YouTube OAuth client secret.
         logger:         Logger for progress messages.
+        video_stem:     Filename stem for tracker linkage.
+        scene_stem_prefix: Shared prefix across AB variants (blocks same-scene doubles).
+        genre:          "Jazz" or "HipHop" — used to pick the genre playlist.
+        scene_prompt:   Original scene description — used to pick morning/evening playlist.
+        playlists:      Dict with optional keys: jazz, hiphop, morning, evening (playlist IDs).
 
     Returns:
         YouTube video URL (https://youtu.be/{video_id})
@@ -155,7 +184,7 @@ def upload_to_youtube(
     youtube = _get_youtube_client(client_id, client_secret)
 
     # Calculate the optimal publish time (next Thu or Fri at 7pm EST)
-    publish_at = next_optimal_publish_time()
+    publish_at = next_optimal_publish_time(scene_stem_prefix=scene_stem_prefix)
     publish_at_str = publish_at.strftime("%Y-%m-%dT%H:%M:%S%z")
     publish_day = publish_at.strftime("%A %B {day} at %I:%M%p EST").format(day=publish_at.day)
 
@@ -170,10 +199,10 @@ def upload_to_youtube(
             "defaultLanguage": "en",
         },
         "status": {
-            "privacyStatus": "private",      # Private until publish time
-            "publishAt": publish_at_str,      # YouTube auto-publishes at this time
-            "selfDeclaredMadeForKids": False,
-            "containsSyntheticMedia": True,
+            "privacyStatus": "private",       # Private until publish time
+            "publishAt": publish_at_str,       # YouTube auto-publishes at this time
+            "selfDeclaredMadeForKids": False,  # Not children's content
+            "containsSyntheticMedia": False,   # No real people, events, or realistic-looking scenes
         },
     }
 
@@ -231,13 +260,93 @@ def upload_to_youtube(
     local_logger.info(f"  Publishes automatically: {publish_day}")
     local_logger.info("  To change schedule: YouTube Studio → Videos → click the video → Visibility")
 
+    # Add to playlists
+    if playlists:
+        _assign_playlists(youtube, video_id, genre, scene_prompt, playlists, local_logger)
+
     # Track the video ID for the analytics dashboard
-    _save_video_to_tracker(video_id, metadata.get("title", ""), publish_at_str)
+    _save_video_to_tracker(video_id, metadata.get("title", ""), publish_at_str, video_stem)
 
     return video_url
 
 
-def _save_video_to_tracker(video_id: str, title: str, publish_at: str):
+_LATE_NIGHT_KEYWORDS = {
+    "night", "moonlit", "midnight", "late night", "nighttime", "stars", "starlit",
+    "after dark", "dusk", "evening",
+}
+
+
+def _detect_time_of_day(scene_prompt: str) -> str:
+    """Return 'evening' for clearly nighttime scenes, 'morning' for everything else."""
+    if not scene_prompt:
+        return "morning"
+    lower = scene_prompt.lower()
+    if any(kw in lower for kw in _LATE_NIGHT_KEYWORDS):
+        return "evening"
+    return "morning"
+
+
+def _assign_playlists(
+    youtube,
+    video_id: str,
+    genre: str,
+    scene_prompt: str,
+    playlists: dict,
+    local_logger: logging.Logger,
+):
+    """Insert video_id into the appropriate genre and time-of-day playlists."""
+    targets = []
+
+    genre_key = (genre or "").lower()  # "jazz" or "hiphop"
+    if genre_key == "hiphop":
+        genre_key = "hiphop"
+    playlist_id = playlists.get(genre_key)
+    if playlist_id:
+        targets.append((genre_key, playlist_id))
+
+    tod = _detect_time_of_day(scene_prompt)
+    if tod:
+        tod_id = playlists.get(tod)
+        if tod_id:
+            targets.append((tod, tod_id))
+
+    for label, pid in targets:
+        try:
+            youtube.playlistItems().insert(
+                part="snippet",
+                body={
+                    "snippet": {
+                        "playlistId": pid,
+                        "resourceId": {"kind": "youtube#video", "videoId": video_id},
+                    }
+                },
+            ).execute()
+            local_logger.info(f"  ✓ Added to playlist: {label} ({pid})")
+        except Exception as e:
+            local_logger.warning(f"  ⚠️ Could not add to {label} playlist: {e}")
+
+
+def list_channel_playlists(client_id: str, client_secret: str) -> list[dict]:
+    """Fetch all playlists for the authenticated channel. Returns list of {id, title}."""
+    youtube = _get_youtube_client(client_id, client_secret)
+    results = []
+    page_token = None
+    while True:
+        resp = youtube.playlists().list(
+            part="snippet",
+            mine=True,
+            maxResults=50,
+            pageToken=page_token,
+        ).execute()
+        for item in resp.get("items", []):
+            results.append({"id": item["id"], "title": item["snippet"]["title"]})
+        page_token = resp.get("nextPageToken")
+        if not page_token:
+            break
+    return results
+
+
+def _save_video_to_tracker(video_id: str, title: str, publish_at: str, video_stem: str = None):
     """Append this video to output/video_tracker.json for the analytics dashboard."""
     tracker_file = "output/video_tracker.json"
     os.makedirs("output", exist_ok=True)
@@ -252,12 +361,15 @@ def _save_video_to_tracker(video_id: str, title: str, publish_at: str):
 
     # Avoid duplicates
     if not any(v.get("video_id") == video_id for v in existing):
-        existing.append({
+        entry = {
             "video_id": video_id,
             "title": title,
             "uploaded_at": datetime.now(timezone(timedelta(hours=-5))).isoformat(),
             "publish_at": publish_at,
-        })
+        }
+        if video_stem:
+            entry["video_stem"] = video_stem
+        existing.append(entry)
         with open(tracker_file, "w") as f:
             json.dump(existing, f, indent=2)
 
