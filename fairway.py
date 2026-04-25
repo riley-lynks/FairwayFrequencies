@@ -24,6 +24,7 @@
 # =============================================================================
 
 import argparse           # For parsing command-line arguments like --duration
+import re
 import sys                # For sys.exit() when something goes wrong
 
 # Fix Windows terminal encoding so special characters don't crash the script.
@@ -738,6 +739,9 @@ def run_pipeline(prompt: str, args, run_dir: str, logger: logging.Logger, state:
                 if stem_prefix.endswith(_suffix):
                     stem_prefix = stem_prefix[: -len(_suffix)]
                     break
+            # Strip the HHMMSS component so Jazz and HipHop runs from the same
+            # day (different timestamps) are treated as the same scene pair.
+            stem_prefix = re.sub(r'_\d{6}$', '', stem_prefix)
             upload_to_youtube(
                 video_path=final_video_path,
                 thumbnail_path=thumbnail_path,

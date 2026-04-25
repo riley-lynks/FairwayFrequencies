@@ -42,6 +42,7 @@ try:
     from googleapiclient.http import MediaFileUpload
     from google_auth_oauthlib.flow import InstalledAppFlow
     from google.oauth2.credentials import Credentials
+    from google.auth.transport.requests import Request
     GOOGLE_LIBS_AVAILABLE = True
 except ImportError:
     GOOGLE_LIBS_AVAILABLE = False
@@ -50,7 +51,7 @@ except ImportError:
 YOUTUBE_SCOPES = ["https://www.googleapis.com/auth/youtube"]
 
 # Where to store the OAuth token after first login
-TOKEN_FILE = ".youtube_token.json"
+TOKEN_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".youtube_token.json")
 
 
 def next_optimal_publish_time(
@@ -194,7 +195,7 @@ def upload_to_youtube(
         "snippet": {
             "title": metadata.get("title", "Fairway Frequencies — LoFi Golf")[:100],
             "description": metadata.get("description", "")[:5000],
-            "tags": metadata.get("tags", [])[:500],  # YouTube tag limit
+            "tags": _sanitize_tags(metadata.get("tags", [])),
             "categoryId": metadata.get("category", "10"),
             "defaultLanguage": "en",
         },
@@ -268,6 +269,18 @@ def upload_to_youtube(
     _save_video_to_tracker(video_id, metadata.get("title", ""), publish_at_str, video_stem)
 
     return video_url
+
+
+def _sanitize_tags(tags: list) -> list:
+    """Enforce YouTube's 500 total-character tag limit (each tag also ≤ 30 chars)."""
+    result, total = [], 0
+    for tag in tags:
+        tag = tag[:30]
+        if total + len(tag) > 500:
+            break
+        result.append(tag)
+        total += len(tag)
+    return result
 
 
 _LATE_NIGHT_KEYWORDS = {
@@ -405,7 +418,18 @@ def _get_youtube_client(client_id: str, client_secret: str):
             logger.warning(f"  Saved YouTube credentials invalid: {e}. Re-authenticating...")
             credentials = None
 
-    # If no valid credentials, do the OAuth flow
+    # Silently refresh expired token using the saved refresh token
+    if credentials and not credentials.valid and credentials.expired and credentials.refresh_token:
+        try:
+            credentials.refresh(Request())
+            with open(TOKEN_FILE, "w") as f:
+                json.dump(json.loads(credentials.to_json()), f)
+            logger.debug("  YouTube token refreshed silently")
+        except Exception as e:
+            logger.warning(f"  Token refresh failed: {e}. Re-authenticating...")
+            credentials = None
+
+    # If still no valid credentials, do the full OAuth flow (first run only)
     if not credentials or not credentials.valid:
         # Build a temporary client secrets dict
         client_config = {

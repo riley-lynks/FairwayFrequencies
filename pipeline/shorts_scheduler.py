@@ -50,6 +50,7 @@ try:
     from googleapiclient.http import MediaFileUpload
     from google_auth_oauthlib.flow import InstalledAppFlow
     from google.oauth2.credentials import Credentials
+    from google.auth.transport.requests import Request as _GoogleRequest
     GOOGLE_LIBS_AVAILABLE = True
 except ImportError:
     GOOGLE_LIBS_AVAILABLE = False
@@ -525,6 +526,13 @@ def schedule_weeks(
     scheduled_slots = []
     pool = _unused_shorts(tracker)
 
+    # Dates that already have a successfully uploaded short — skip them on retry runs
+    already_filled = {
+        s["scheduled_for"][:10]
+        for s in tracker["shorts"]
+        if s.get("status") == "scheduled" and s.get("scheduled_for") and s.get("youtube_short_id")
+    }
+
     for week_offset in range(weeks_ahead):
         week_monday = first_monday + timedelta(weeks=week_offset)
         last_sunday = week_monday - timedelta(days=1)
@@ -609,6 +617,10 @@ def schedule_weeks(
 
             if publish_at.date() < today:
                 continue  # Never schedule in the past
+
+            if slot_date.isoformat() in already_filled:
+                logger.info(f"  {slot_date} ({slot_type}) — already uploaded, skipping")
+                continue
 
             if short is None:
                 logger.warning(f"  No available short for {slot_date} ({slot_type}) — slot skipped")
@@ -848,6 +860,15 @@ def _get_client(client_id: str, client_secret: str):
                 credentials = Credentials.from_authorized_user_info(
                     json.load(f), YOUTUBE_SCOPES
                 )
+        except Exception:
+            credentials = None
+
+    # Silently refresh expired token before falling back to browser OAuth
+    if credentials and not credentials.valid and credentials.expired and credentials.refresh_token:
+        try:
+            credentials.refresh(_GoogleRequest())
+            with open(TOKEN_FILE, "w") as f:
+                json.dump(json.loads(credentials.to_json()), f)
         except Exception:
             credentials = None
 
