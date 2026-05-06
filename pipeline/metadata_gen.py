@@ -19,6 +19,7 @@
 # =============================================================================
 
 import base64
+import glob
 import json
 import logging
 import os
@@ -27,6 +28,43 @@ import anthropic
 import config
 
 logger = logging.getLogger("fairway.metadata_gen")
+
+
+def _recent_longform_titles(max_n: int = 20) -> list[str]:
+    """Scan output/ for long-form metadata files and return the most-recent
+    N titles by file mtime, deduped. Used to feed Claude a "don't repeat
+    these phrasings" list so descriptions and titles don't drift into a
+    template across uploads."""
+    patterns = [
+        "output/archive/*/fairway_*_metadata.json",
+        "output/archive/fairway_*_metadata.json",
+        "output/*/fairway_*_metadata.json",
+    ]
+    seen_paths = set()
+    files = []
+    for p in patterns:
+        for fp in glob.glob(p):
+            if fp not in seen_paths:
+                seen_paths.add(fp)
+                files.append(fp)
+
+    files.sort(key=lambda f: os.path.getmtime(f), reverse=True)
+
+    titles: list[str] = []
+    seen_titles: set[str] = set()
+    for fp in files:
+        try:
+            with open(fp, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+        except Exception:
+            continue
+        title = (meta.get("title") or "").strip()
+        if title and title not in seen_titles:
+            titles.append(title)
+            seen_titles.add(title)
+            if len(titles) >= max_n:
+                break
+    return titles
 
 
 def _chapter_timestamps(duration_hours: float) -> list[tuple[int, str]]:
@@ -69,6 +107,7 @@ def generate_metadata(
     duration_hours: float = 2.0,
     image_path: str = None,
     genre: str = None,
+    recent_titles: list = None,
     logger: logging.Logger = None,
 ) -> dict:
     """
@@ -82,12 +121,16 @@ def generate_metadata(
         image_path:     Path to the selected base image (used for vision-based description).
         genre:          Music genre for this video (e.g. "Jazz", "HipHop"). When set,
                         Claude includes the genre in the title and thumbnail_text.
+        recent_titles:  List of recently uploaded long-form titles to avoid echoing.
+                        When None, scans output/ for the last 20 titles.
         logger:         Logger for progress messages.
 
     Returns:
         Dict with 'title', 'description', 'tags', 'category', 'is_made_for_kids'.
     """
     local_logger = logger or logging.getLogger("fairway.metadata_gen")
+    if recent_titles is None:
+        recent_titles = _recent_longform_titles()
 
     mood = orchestration.get("mood", "calm")
     time_of_day = orchestration.get("time_of_day", "morning")
@@ -115,6 +158,10 @@ def generate_metadata(
         "Do NOT use a jazz lead phrase for hip-hop or vice versa."
     ) if genre_display and genre_lead_hint else ""
 
+    recent_block = (
+        "\n".join(f"- {t}" for t in recent_titles[:20]) if recent_titles else "(none yet)"
+    )
+
     user_message = f"""Scene prompt: "{scene_prompt}"
 Mood: {mood}
 Time of day: {time_of_day}
@@ -127,15 +174,10 @@ Channel name: Fairway Frequencies{genre_line}
 The image attached is the exact frame used in this video — base the description on what you actually see in it, not on the prompt text.
 {f'Note: {character_note}.' if character_note else ''}
 
-Generate YouTube metadata for this LoFi Golf video.
+recent_titles (avoid echoing these phrasings, hooks, or scene words):
+{recent_block}
 
-Remember:
-- Title should be under 70 characters
-- Description must hook viewers in the first 2 lines (they appear before "...more")
-- Description body must weave in searchable keyword phrases naturally (lofi, study music, golf, chill, focus music, etc.)
-- Include 25-30 tags
-- Provide exactly {len(stamps)} chapter names (one per timestamp: {timestamps_str})
-- This is a {duration_hours}-hour relaxation/study music video"""
+Generate fresh YouTube metadata for this LoFi Golf video. Provide exactly {len(stamps)} chapter names (one per timestamp: {timestamps_str}). Return ONLY the JSON object."""
 
     local_logger.debug("  Calling Claude for metadata generation...")
 
@@ -160,7 +202,11 @@ Remember:
             response = client.messages.create(
                 model=claude_model,
                 max_tokens=2000,
-                system=system_prompt,
+                system=[{
+                    "type": "text",
+                    "text": system_prompt,
+                    "cache_control": {"type": "ephemeral"},
+                }],
                 messages=[{"role": "user", "content": message_content}],
             )
 
@@ -267,31 +313,77 @@ def _build_fallback_metadata(scene_prompt, mood, time_of_day, season, has_charac
 
 
 def _get_inline_metadata_prompt() -> str:
-    """Fallback metadata system prompt."""
-    return """You are the social media manager for "Fairway Frequencies", a LoFi Golf YouTube channel.
-Your job is to write YouTube metadata that maximizes discoverability and clicks.
+    """Long-form video metadata system prompt — written to encourage variety
+    across uploads, not templated repetition. Cache-friendly so back-to-back
+    AB-test calls reuse the prefix."""
+    return """You are the social media manager for "Fairway Frequencies", a YouTube channel that publishes long-form (1-3 hour) animated anime/Ghibli golf course scenes set to LoFi music.
 
-The channel concept: Long-form (2-3 hour) animated anime/Ghibli golf course scenes with LoFi music.
-The audience: Students, remote workers, golfers who use lo-fi as focus/relaxation music.
+Audience: students studying, remote workers focusing, golfers winding down, anime/Ghibli fans, lofi listeners.
+Voice: warm, sensory, slightly poetic, calm. Direct but not flat. Never hype-bro, never aggressive, never AI-tells like "delve into", "unleash", "dive into the world of".
 
-Output ONLY valid JSON with these fields:
+You will receive structured input describing one video:
+- scene_prompt: the original scene description
+- mood, time_of_day, season: scene attributes
+- has_character: whether the channel's signature golfer appears
+- duration_hours: video length in hours
+- chapter_timestamps: the timestamps that need chapter names (one per timestamp)
+- genre: jazz or hiphop when set — controls a required title lead phrase
+- recent_titles: titles of recently uploaded long-form videos — DO NOT reuse phrasing, hooks, sentence structure, or scene words from these
+- An attached image: the actual frame used in the video. Base the description on what you SEE, not what the prompt says.
+
+Output ONLY valid JSON, no markdown, no preamble, no code fences:
 {
-  "title": "string — under 70 chars, compelling, includes key terms",
-  "description": "string — hooks in first 2 lines, includes keywords, channel CTA",
-  "tags": ["array", "of", "20-30", "tags"]
+  "title": "string under 70 chars",
+  "thumbnail_text": "2-4 word ALL CAPS phrase for thumbnail overlay",
+  "description": "multi-paragraph string with hook, scene body, CTA, hashtags",
+  "tags": ["array", "of", "25-30", "tags"],
+  "chapter_names": ["array", "of", "exactly N labels for the chapter_timestamps provided"]
 }
 
-Title formula: "[Mood/Time] + [Golf Element] + [LoFi Keyword] + [Duration] ⛳"
-Examples:
-  "Misty Morning Golf Course | Chill Lofi Beats | 2 Hours ⛳"
-  "Golden Hour Fairway | Study Music Lofi | 2 Hours ⛳"
-  "Moonlit Links Course | Dreamy Lofi Hip Hop | 3 Hours ⛳"
+TITLE RULES:
+- Under 70 characters total
+- For jazz: title MUST contain one of "Jazz to Study & Relax" or "Jazz to Relax To"
+- For hip-hop: title MUST contain one of "Lofi Hip Hop Study Beats", "Beats to Study To", or "Chill Beats to Study To"
+- For untyped (no genre): use "Lofi" or "Chill Lofi" naturally
+- End with ⛳ (or include it adjacent to the duration)
+- Vary the structure across calls — pick a different shape than the recent_titles. Acceptable shapes:
+  * "[Lead Phrase] | [Scene Element] | [Duration] ⛳"
+  * "[Scene Element] • [Lead Phrase] ⛳ [Duration]"
+  * "[Mood/Time] [Scene] — [Lead Phrase] | [Duration] ⛳"
+  * "[Lead Phrase] for [Use Case] | [Scene] ⛳ [Duration]"
+- Vary separators across calls: |, •, —, en dash. Do not always use the same one
+- Do not reuse the exact word ordering of any recent_title
 
-Description structure:
-  Line 1 (fixed): "Lofi beats and ambient sounds for studying, working, and relaxing — from the world's most peaceful golf courses. 🎵"
-  Line 2: Unique 2-3 sentence scene description with keywords woven in naturally.
-  Line 3 (fixed): "🔔 New scenes drop every week — subscribe so you never miss a round.\n👍 If this helped you focus or unwind, a like helps the channel grow.\n🎥 More long-form golf course sessions on the channel."
-  Hashtags: #lofi #studymusic #ambientmusic #chillbeats #golfvibes + 3-5 scene-specific ones.
+DESCRIPTION RULES:
+The description is multi-paragraph plain text. The first 2 lines are what YouTube shows above the "...more" fold, so they must hook. There is no fixed line-1 or fixed CTA block — write fresh each time.
 
-Tags should include: lofi, golf, lofi golf, study music, chill music, the scene keywords,
-anime, ghibli, and long-tail variations that golfers and study-music fans would search for."""
+Structure (flexible — vary across calls):
+1. HOOK (1-2 short sentences): pull the viewer into the scene. Mix patterns across calls — sometimes lead with the scene image, sometimes a sensory cue, sometimes a use case ("Settle in for a long study block"), sometimes a contrast or invitation. Do NOT always start with the same fixed phrase.
+2. SCENE BODY (2-4 sentences): describe what's IN THE IMAGE — atmosphere, light, color, weather, time of day, mood. Weave search keywords in naturally: lofi, study music, focus music, chill beats, golf, anime, ghibli, plus the genre when set. Sound like a human noticed the scene, not a template.
+3. CTA (2-3 lines): nudge subscribe + like + "more on the channel" — but vary the wording AND format. Sometimes use emoji bullets (🔔 👍 🎥), sometimes inline prose, sometimes a single sentence. Don't repeat any single CTA wording across recent_titles.
+4. HASHTAGS (last line): 5-8 hashtags including #lofi #studymusic plus 3-5 scene-specific ones. Vary which scene-specific tags you pick.
+
+Total description target: 600-1100 characters before the chapter block (chapters are appended programmatically).
+
+THUMBNAIL_TEXT:
+- 2-4 words, ALL CAPS
+- When genre is jazz: include "JAZZ" (e.g. "JAZZ LOFI", "JAZZ STUDY", "JAZZ GOLF")
+- When genre is hiphop: include "HIP HOP" or "BEATS" (e.g. "HIP HOP STUDY", "LOFI BEATS")
+- When no genre: use scene-driven copy ("MISTY LINKS", "GOLDEN HOUR", "STUDY MUSIC")
+- Vary across calls — do not reuse a thumbnail_text that appears in recent_titles' implied thumbnails
+
+CHAPTER_NAMES:
+- Provide EXACTLY the count of timestamps given in chapter_timestamps
+- Should follow a narrative arc through the round (arrival → settling in → deep focus → golden hour → final approach, etc.)
+- Use the scene's actual atmosphere — pull words from the image (e.g. "First Light at the Tee", "Mist Lifts Off the Green", "Cherry Blossoms on the 9th")
+- Each chapter name 3-7 words, no leading numbers or timestamps
+
+TAGS:
+- 25-30 tags total
+- Required base set: lofi, golf, lofi golf, study music, chill music, focus music, relaxing music, ambient music, fairway frequencies
+- Genre-specific when set: jazz lofi / lofi hip hop / lo-fi hip hop / lofi beats
+- Anime/aesthetic: anime music, ghibli music, anime golf, studio ghibli
+- Scene-specific: pull 6-10 tags from the actual image and scene_prompt (e.g. coastal links, misty morning, cherry blossom, dawn fairway)
+- Long-tail: "{duration_hours} hour study music", "{mood} {time_of_day} music"
+
+Do NOT echo phrasing from recent_titles. Each upload should feel hand-written for that specific scene — not a templated fill-in-the-blank."""
