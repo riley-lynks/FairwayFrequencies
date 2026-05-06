@@ -1060,6 +1060,27 @@ def parse_args():
     return parser.parse_args()
 
 
+def _auto_schedule_shorts(args, logger):
+    """Schedule shorts to YouTube after a successful upload. Shared by fresh
+    runs and --resume so resumed runs don't silently skip shorts scheduling."""
+    if not getattr(args, 'upload', False):
+        return
+    weeks = getattr(args, 'weeks', 4)
+    logger.info("\n" + "━" * 60)
+    logger.info(f"  Auto-scheduling {weeks} weeks of shorts to YouTube...")
+    logger.info("━" * 60)
+    try:
+        slots = schedule_weeks(
+            weeks_ahead=weeks,
+            client_id=config.YOUTUBE_CLIENT_ID,
+            client_secret=config.YOUTUBE_CLIENT_SECRET,
+        )
+        logger.info(f"  ✓ {len(slots)} shorts scheduled")
+    except Exception as e:
+        logger.warning(f"  ⚠ Shorts auto-scheduling failed: {e}")
+        logger.warning("  Run: python fairway.py --schedule-shorts to retry")
+
+
 # =============================================================================
 # ENTRY POINT
 # =============================================================================
@@ -1192,12 +1213,19 @@ def main():
             print("  Check the path and try again.")
             sys.exit(1)
         prompt = state.get("prompt", "")
+        # Restore original pipeline args so AB test / duration are preserved
+        saved_args = state.get("_args", {})
+        if saved_args.get("ab_test") and not getattr(args, "ab_test", False):
+            args.ab_test = True
+        if "duration" in saved_args and getattr(args, "duration", None) in (None, 2):
+            args.duration = saved_args["duration"]
         logger = setup_logging(run_dir)
         logger.info(f"Resuming run from: {run_dir}")
         logger.info(f"Completed stages: {list(state.keys())}")
         if not check_requirements(args):
             sys.exit(1)
         run_pipeline(prompt, args, run_dir, logger, state)
+        _auto_schedule_shorts(args, logger)
         return
 
     # Handle --test — run a smoke test with a short duration
@@ -1256,30 +1284,20 @@ def main():
         logger.error("\nPlease fix the issues above and try again.")
         sys.exit(1)
 
-    # Start fresh state
-    state = {"prompt": prompt}
+    # Start fresh state — persist pipeline args so --resume restores them correctly
+    state = {
+        "prompt": prompt,
+        "_args": {
+            "ab_test": getattr(args, "ab_test", False),
+            "duration": getattr(args, "duration", 2),
+        },
+    }
     save_state(run_dir, state)
 
     # Run the full pipeline
     try:
         run_pipeline(prompt, args, run_dir, logger, state)
-
-        # Auto-schedule shorts after a successful upload
-        if getattr(args, 'upload', False):
-            weeks = getattr(args, 'weeks', 4)
-            logger.info("\n" + "━" * 60)
-            logger.info(f"  Auto-scheduling {weeks} weeks of shorts to YouTube...")
-            logger.info("━" * 60)
-            try:
-                slots = schedule_weeks(
-                    weeks_ahead=weeks,
-                    client_id=config.YOUTUBE_CLIENT_ID,
-                    client_secret=config.YOUTUBE_CLIENT_SECRET,
-                )
-                logger.info(f"  ✓ {len(slots)} shorts scheduled")
-            except Exception as e:
-                logger.warning(f"  ⚠ Shorts auto-scheduling failed: {e}")
-                logger.warning("  Run: python fairway.py --schedule-shorts to retry")
+        _auto_schedule_shorts(args, logger)
 
     except KeyboardInterrupt:
         logger.info(f"\n⚠️  Run interrupted. Resume with:")
