@@ -113,7 +113,7 @@ def next_optimal_publish_time(
             nearest_sunday = candidate.replace(hour=target_hour, minute=0, second=0, microsecond=0)
             break
 
-    for days_ahead in range(90):  # Look up to ~3 months ahead
+    for days_ahead in range(365):  # Look up to ~1 year ahead
         candidate = now + timedelta(days=days_ahead)
         if candidate.weekday() == 6:  # Sunday
             publish_dt = candidate.replace(
@@ -134,8 +134,9 @@ def next_optimal_publish_time(
                     )
                 return publish_dt
 
-    # Fallback: 7 days from now at 9am (should never hit this)
-    return (now + timedelta(days=7)).replace(
+    # Fallback: next Sunday at least 8 days out (should never hit this — 52 weeks weren't enough)
+    days_to_sunday = (6 - now.weekday()) % 7 or 7
+    return (now + timedelta(days=days_to_sunday + 7)).replace(
         hour=target_hour, minute=0, second=0, microsecond=0
     )
 
@@ -203,7 +204,7 @@ def upload_to_youtube(
     local_logger.info("  Authenticating with YouTube...")
     youtube = _get_youtube_client(client_id, client_secret)
 
-    # Calculate the optimal publish time (next Thu or Fri at 7pm EST)
+    # Calculate the optimal publish time (next available Sunday at 9am EST)
     publish_at = next_optimal_publish_time(scene_stem_prefix=scene_stem_prefix)
     publish_at_str = publish_at.strftime("%Y-%m-%dT%H:%M:%S%z")
     publish_day = publish_at.strftime("%A %B {day} at %I:%M%p EST").format(day=publish_at.day)

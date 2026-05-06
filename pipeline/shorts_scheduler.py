@@ -668,7 +668,7 @@ def _upload_short_to_youtube(
 # =============================================================================
 
 def schedule_weeks(
-    weeks_ahead: int = 4,
+    weeks_ahead: int = None,
     client_id: str = None,
     client_secret: str = None,
     dry_run: bool = False,
@@ -678,7 +678,9 @@ def schedule_weeks(
     upload shorts to YouTube, and update the tracker.
 
     Args:
-        weeks_ahead:   How many future weeks to schedule.
+        weeks_ahead:   How many future weeks to schedule. Defaults to None,
+                       which schedules through the last video in video_tracker
+                       plus one buffer week.
         client_id:     YouTube OAuth client ID (required unless dry_run).
         client_secret: YouTube OAuth client secret (required unless dry_run).
         dry_run:       If True, print the schedule without uploading anything.
@@ -708,9 +710,24 @@ def schedule_weeks(
     # Find the next Monday on or after today
     today = date.today()
     days_until_monday = (7 - today.weekday()) % 7
-    if days_until_monday == 0:
-        days_until_monday = 0  # today is already Monday
     first_monday = today + timedelta(days=days_until_monday)
+
+    # Default: cover through the last scheduled video + 1 buffer week
+    if weeks_ahead is None:
+        future_dates = []
+        for v in video_tracker:
+            pa = v.get("publish_at")
+            if pa:
+                try:
+                    future_dates.append(datetime.strptime(pa[:10], "%Y-%m-%d").date())
+                except Exception:
+                    pass
+        if future_dates:
+            last_video_date = max(future_dates)
+            weeks_ahead = max(1, (last_video_date - first_monday).days // 7 + 2)
+        else:
+            weeks_ahead = 8
+        logger.info(f"  Scheduling {weeks_ahead} weeks (through last scheduled video)")
 
     scheduled_slots = []
     pool = _unused_shorts(tracker)

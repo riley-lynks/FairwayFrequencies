@@ -973,15 +973,15 @@ def parse_args():
         "--schedule-shorts",
         dest="schedule_shorts",
         action="store_true",
-        help="Seed the shorts tracker and schedule the next 4 weeks of shorts to YouTube",
+        help="Seed the shorts tracker and schedule shorts through all planned long-form videos",
     )
 
     parser.add_argument(
         "--weeks",
         type=int,
-        default=4,
+        default=None,
         metavar="N",
-        help="Weeks of shorts to schedule — applies to --schedule-shorts and the auto-schedule after --upload (default: 4)",
+        help="Weeks of shorts to schedule — applies to --schedule-shorts and the auto-schedule after --upload (default: covers all scheduled videos)",
     )
 
     parser.add_argument(
@@ -1065,9 +1065,9 @@ def _auto_schedule_shorts(args, logger):
     runs and --resume so resumed runs don't silently skip shorts scheduling."""
     if not getattr(args, 'upload', False):
         return
-    weeks = getattr(args, 'weeks', 4)
+    weeks = getattr(args, 'weeks', None)
     logger.info("\n" + "━" * 60)
-    logger.info(f"  Auto-scheduling {weeks} weeks of shorts to YouTube...")
+    logger.info(f"  Auto-scheduling shorts to YouTube...")
     logger.info("━" * 60)
     try:
         slots = schedule_weeks(
@@ -1130,7 +1130,7 @@ def main():
 
     # Handle --schedule-shorts: seed tracker + schedule + upload, then exit
     if getattr(args, 'schedule_shorts', False):
-        weeks = getattr(args, 'weeks', 4)
+        weeks = getattr(args, 'weeks', None)
         dry_run = getattr(args, 'dry_run', False)
         logging.basicConfig(
             level=logging.INFO,
@@ -1140,7 +1140,6 @@ def main():
         )
         mode = "DRY RUN — " if dry_run else ""
         print(f"\n  Fairway Frequencies — {mode}Shorts Scheduler")
-        print(f"  Scheduling {weeks} weeks of shorts...\n")
         slots = schedule_weeks(
             weeks_ahead=weeks,
             client_id=config.YOUTUBE_CLIENT_ID,
