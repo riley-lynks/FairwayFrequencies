@@ -33,6 +33,14 @@ from datetime import date, datetime, timedelta, timezone
 from difflib import SequenceMatcher
 from pathlib import Path
 
+import config
+
+try:
+    import anthropic
+    _ANTHROPIC_AVAILABLE = True
+except ImportError:
+    _ANTHROPIC_AVAILABLE = False
+
 logger = logging.getLogger("fairway.shorts_scheduler")
 
 TRACKER_PATH = "output/shorts_tracker.json"
@@ -118,6 +126,173 @@ TEASER_TOMORROW_DESCRIPTION = (
     "Follow Fairway Frequencies so you don't miss it ↓\n\n"
     "#lofi #golf #shorts #comingsoon #lofimusic #golfvibes #chillbeats"
 )
+
+
+# Claude-generated metadata: system prompt is written long enough to clear
+# the 2048-token cache minimum on Sonnet 4.6 — same prefix is reused for every
+# short in a scheduling run, so cache reads cut cost ~10x after the first call.
+_SHORT_METADATA_SYSTEM = """You are the social media manager for "Fairway Frequencies", a YouTube channel that publishes long-form (1-3 hour) animated anime/Ghibli golf course scenes set to LoFi music, with weekly Shorts that promote and complement the long-form videos.
+
+Your job: write YouTube Shorts metadata (title + description) that maximizes click-through, watch-time, and discoverability for golfers, students, and remote workers who use lofi music for focus and relaxation.
+
+Channel context:
+- Audience: students studying, remote workers focusing, golfers winding down, anime/Ghibli fans, lofi listeners.
+- Vibe: peaceful, painterly, nostalgic, dreamy. Never hype-bro, never aggressive, never crypto-style "SHOCKING" energy.
+- Voice: warm, sensory, slightly poetic, calm. Direct but not flat.
+
+You will receive structured input describing one Short:
+- slot_type: one of standalone | teaser_sunday | teaser_tomorrow
+  * standalone: a regular Short, post-release content from a long-form that already aired
+  * teaser_sunday: posts on a Wednesday for the long-form video that drops the upcoming Sunday — convey "new long-form drops Sunday"
+  * teaser_tomorrow: posts on a Saturday for the long-form video that drops Sunday — convey "new long-form drops tomorrow"
+- effect: the visual style of the clip (warm_grade, ken_burns, bloom_fade, cool_mist, golfquilizer)
+- genre: jazz or hiphop (the music style for this clip's parent video)
+- parent_title: the long-form video's title (use it to mine scene-specific keywords)
+- parent_description_excerpt: snippet of the long-form description (mine for atmosphere keywords)
+- parent_tags: SEO tags from the long-form (cherry pick relevant ones)
+- recent_titles: titles of recently scheduled shorts — DO NOT reuse phrasing, hooks, or sentence structures from these
+
+Output ONLY valid JSON with exactly two fields, no surrounding markdown:
+{
+  "title": "string under 90 characters, ends with #shorts or | #shorts, includes 1-2 search keywords naturally",
+  "description": "string with hook line, 1-2 atmosphere lines, then 6-10 hashtags including #lofi #golf #shorts plus 3-7 scene-specific tags"
+}
+
+TITLE RULES:
+- Under 90 characters total (YouTube hides everything past ~70 in feed previews)
+- First 5 words must hook — assume the viewer is scrolling fast
+- Always end the title with " #shorts" or " | #shorts"
+- Vary the hook structure across calls. Acceptable patterns: question ("Ever heard a golf course breathe?"), POV ("POV: lofi at the cherry blossom green"), sensory cue ("Rain on a Japanese fairway, jazz, repeat"), bold claim ("This might be the most peaceful 60 seconds on YouTube"), instruction ("Put this on, close your eyes, drift"), contrast ("Golf course but make it Studio Ghibli"), countdown ("3 days till the new hole drops"), seasonal ("Spring lofi golf hits different")
+- For teaser_sunday: communicate "long-form drops this Sunday" without quoting that exact phrase. Vary it: "Full hole drops Sunday", "New 1-hour scene this Sunday", "Sunday: a cherry blossom green for an hour", etc.
+- For teaser_tomorrow: communicate "long-form drops tomorrow" with similar variety
+- Weave search keywords naturally: lofi, golf, lofi golf, study music, chill beats, focus music, anime, ghibli, the scene's specific elements (cherry blossom, japanese garden, dusk, koi pond, etc.)
+- NEVER copy a recent title's hook verbatim. If recent titles all start with "POV", switch patterns
+
+DESCRIPTION RULES:
+- Line 1 (hook): one short sentence that pulls the viewer to actually watch the loop, not skip
+- Line 2-3 (atmosphere): 1-2 sentences describing the scene's vibe with sensory keywords woven in. Mention the genre (jazz or hiphop) somewhere if natural
+- Final line (hashtags): 6-10 hashtags, space-separated, on a single line. Always include #lofi #golf #shorts. Then 3-7 scene-specific tags (e.g. #cherryblossom #studyMusic #ghibliVibes #jazzLofi #relaxingMusic). Vary the scene-specific selection per call
+- Keep total length under 700 characters — Shorts descriptions get truncated aggressively
+- Tone: warm, calm, sensory. Avoid: ALL CAPS, emoji walls, corporate language ("we are excited to announce"), AI-tells ("delve into", "unleash", "dive into the world of")
+
+EXAMPLES (study these for tone and variety, then write fresh):
+
+Input: standalone, warm_grade, jazz, parent="Rainy Cherry Blossom Green | Jazz to Relax To"
+Output:
+{
+  "title": "Soft jazz, cherry blossoms, and a quiet fairway #shorts",
+  "description": "60 seconds of slow jazz on a rainy spring green.\\nCherry blossoms drifting through the rain, the kind of scene that makes you forget what you were stressed about. Save this one for late-night study sessions.\\n\\n#lofi #golf #shorts #jazzLofi #cherryblossom #studyMusic #relaxingMusic #rainSounds"
+}
+
+Input: teaser_sunday, bloom_fade, hiphop, parent="Lofi Hip Hop Study Beats | Cherry Blossom Golf"
+Output:
+{
+  "title": "New 1-hour cherry blossom hole drops this Sunday — lofi hip hop edition #shorts",
+  "description": "A full hour of lofi hip hop on a Studio Ghibli golf course. Sunday at 9am EST.\\nBloom-fade light through pink trees, slow beats, no interruptions — the kind of background you can leave running while you work. Subscribe so you catch it Sunday morning.\\n\\n#lofi #golf #shorts #lofiHipHop #cherryblossom #ghibliVibes #studyBeats #comingSunday"
+}
+
+Input: teaser_tomorrow, cool_mist, jazz, parent="Misty Highland Course | Jazz to Study To"
+Output:
+{
+  "title": "Misty highland golf + jazz, full hour drops tomorrow #shorts",
+  "description": "Tomorrow, 9am EST: a full hour on a misty Scottish links course set to slow jazz.\\nFog rolling across the fairway, the soft hush of wind through dune grass — pure focus music for cold mornings. Smash subscribe so you don't miss the drop.\\n\\n#lofi #golf #shorts #jazzLofi #scottishLinks #focusMusic #studyMusic #droppingTomorrow"
+}
+
+Input: standalone, golfquilizer, hiphop, parent="Sunset Coastal Course | Lofi Hip Hop"
+Output:
+{
+  "title": "When the lofi beats line up with the swing #shorts",
+  "description": "Sunset on a coastal fairway, hip hop pulsing in the background, every beat hitting on cue.\\nThis one is from a 2-hour mix on the channel — hit play if you need an hour where nothing demands your attention.\\n\\n#lofi #golf #shorts #lofiHipHop #sunsetGolf #chillBeats #relaxingMusic #focusMusic"
+}
+
+Input: standalone, ken_burns, jazz, parent="Painted Japanese Garden | Jazz to Relax To"
+Output:
+{
+  "title": "Every frame of this golf course is a painting #shorts",
+  "description": "Painted Japanese garden, slow jazz, the kind of clip that feels like a moving watercolor.\\nLet your eyes wander. The full 90-minute version lives on the channel — perfect for long study blocks.\\n\\n#lofi #golf #shorts #jazzLofi #japaneseGarden #studyMusic #ghibliVibes #peacefulMusic"
+}
+
+Now generate metadata for the input I send next. Return ONLY the JSON object, no preamble, no code fences."""
+
+
+def _read_parent_metadata(video_folder: str) -> dict:
+    """Load the parent long-form video's metadata.json so Claude can mine
+    scene keywords, tags, and description for fresh shorts copy."""
+    if not video_folder:
+        return {}
+    folder_path = os.path.join(ARCHIVE_DIR, video_folder)
+    if not os.path.isdir(folder_path):
+        return {}
+    for fname in os.listdir(folder_path):
+        if fname.endswith("_metadata.json"):
+            try:
+                with open(os.path.join(folder_path, fname), "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+    return {}
+
+
+def _generate_short_metadata_with_claude(
+    short: dict,
+    slot_type: str,
+    video_title: str,
+    parent_metadata: dict,
+    recent_titles: list,
+) -> tuple:
+    """Generate (title, description) via Claude. Returns None on any failure
+    so the caller can fall back to the static template path."""
+    if not _ANTHROPIC_AVAILABLE or not config.ANTHROPIC_API_KEY:
+        return None
+
+    parent_desc = (parent_metadata.get("description") or "")[:600]
+    parent_tags = parent_metadata.get("tags") or []
+    if isinstance(parent_tags, list):
+        parent_tags = [str(t) for t in parent_tags[:12]]
+
+    recent_block = "\n".join(f"- {t}" for t in recent_titles[-20:]) if recent_titles else "(none yet)"
+
+    user_message = (
+        f"slot_type: {slot_type}\n"
+        f"effect: {short.get('effect', 'warm_grade')}\n"
+        f"genre: {short.get('genre', 'jazz')}\n"
+        f"parent_title: {video_title or '(unknown)'}\n"
+        f"parent_description_excerpt: {parent_desc or '(none)'}\n"
+        f"parent_tags: {', '.join(parent_tags) if parent_tags else '(none)'}\n\n"
+        f"recent_titles (avoid these phrasings):\n{recent_block}\n\n"
+        f"Generate fresh metadata. Return ONLY the JSON object."
+    )
+
+    try:
+        client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+        response = client.messages.create(
+            model=config.CLAUDE_MODEL,
+            max_tokens=600,
+            system=[{
+                "type": "text",
+                "text": _SHORT_METADATA_SYSTEM,
+                "cache_control": {"type": "ephemeral"},
+            }],
+            messages=[{"role": "user", "content": user_message}],
+        )
+        text = response.content[0].text.strip()
+
+        if text.startswith("```"):
+            lines = text.split("\n")
+            end = len(lines) - 1 if lines[-1].strip().startswith("```") else len(lines)
+            text = "\n".join(lines[1:end])
+
+        data = json.loads(text)
+        title = (data.get("title") or "").strip()[:100]
+        description = (data.get("description") or "").strip()[:5000]
+        if not title or not description:
+            return None
+        if "#shorts" not in title.lower():
+            title = f"{title[:90]} #shorts"[:100]
+        return title, description
+    except Exception as e:
+        logger.debug(f"  Claude shorts metadata failed, using template fallback: {e}")
+        return None
 
 
 # =============================================================================
@@ -397,8 +572,22 @@ def _find_video_for_sunday(sunday: date, video_tracker: list) -> dict | None:
 # METADATA GENERATION
 # =============================================================================
 
-def _generate_short_metadata(short: dict, slot_type: str, video_title: str) -> tuple[str, str]:
-    """Return (title, description) for a short based on its slot type."""
+def _generate_short_metadata(
+    short: dict,
+    slot_type: str,
+    video_title: str,
+    parent_metadata: dict = None,
+    recent_titles: list = None,
+) -> tuple[str, str]:
+    """Return (title, description) for a short. Tries Claude for keyword-rich,
+    scene-aware, dedup-aware metadata; falls back to static templates on any
+    failure (no API key, network error, malformed response)."""
+    claude_result = _generate_short_metadata_with_claude(
+        short, slot_type, video_title, parent_metadata or {}, recent_titles or []
+    )
+    if claude_result:
+        return claude_result
+
     if slot_type == "teaser_sunday":
         return TEASER_SUNDAY_TITLE, TEASER_SUNDAY_DESCRIPTION
 
@@ -533,6 +722,15 @@ def schedule_weeks(
         if s.get("status") == "scheduled" and s.get("scheduled_for") and s.get("youtube_short_id")
     }
 
+    # Seed dedupe list with the 20 most-recent scheduled titles so Claude
+    # avoids echoing phrasing across runs, not just within one run
+    recent_titles = [
+        s["title"] for s in sorted(
+            (s for s in tracker["shorts"] if s.get("title") and s.get("scheduled_for")),
+            key=lambda s: s["scheduled_for"],
+        )[-20:]
+    ]
+
     for week_offset in range(weeks_ahead):
         week_monday = first_monday + timedelta(weeks=week_offset)
         last_sunday = week_monday - timedelta(days=1)
@@ -639,7 +837,11 @@ def schedule_weeks(
                 continue
 
             video_title = _read_video_title(short["video_folder"])
-            title, description = _generate_short_metadata(short, slot_type, video_title)
+            parent_metadata = _read_parent_metadata(short["video_folder"])
+            title, description = _generate_short_metadata(
+                short, slot_type, video_title, parent_metadata, recent_titles
+            )
+            recent_titles.append(title)
 
             slot_info = {
                 "date": slot_date.isoformat(),
@@ -678,6 +880,7 @@ def schedule_weeks(
                 short["short_type"] = slot_type
                 short["scheduled_for"] = publish_at.isoformat()
                 short["youtube_short_id"] = yt_id
+                short["title"] = title  # persisted so future runs can dedupe
                 slot_info["youtube_short_id"] = yt_id
                 logger.info(f"    ✓ Scheduled: https://youtu.be/{yt_id}")
             except Exception as e:
