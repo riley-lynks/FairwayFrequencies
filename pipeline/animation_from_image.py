@@ -15,14 +15,23 @@
 # =============================================================================
 
 import base64
+import io
 import json
 import logging
 import os
 import anthropic
+from PIL import Image
 
 import config
 
 logger = logging.getLogger("fairway.animation_from_image")
+
+# Anthropic accepts up to 5 MB base64 per image. Base64 inflates raw bytes by
+# ~33%, so we target ~3.5 MB of raw bytes after compression to leave headroom.
+# Claude's vision processing also rescales anything over 1568px on the longest
+# side, so resizing to 1568px is lossless for the model.
+_MAX_LONG_EDGE_PX = 1568
+_TARGET_BYTES = 3_500_000  # 3.5 MB raw → ~4.7 MB base64
 
 
 _SYSTEM_PROMPT = """You are an animation director for "Fairway Frequencies", a LoFi Golf YouTube channel that publishes long-form animated golf course paintings. The video pipeline animates a still image into 3 short looping clips using Kling AI.
@@ -61,12 +70,55 @@ The visible_elements field is for debugging — list the 5-10 most prominent thi
 
 
 def _read_image_b64(image_path: str) -> tuple[str, str]:
-    """Return (media_type, base64_data) for the given image path."""
+    """Return (media_type, base64_data) for the given image path, resizing
+    and recompressing if needed to stay under Claude's 5 MB base64 image cap.
+
+    Anything above 1568px on the longest side is downscaled (Claude rescales
+    anyway). If the resulting JPEG is still over the byte target, JPEG quality
+    drops in steps until it fits.
+    """
+    raw_size = os.path.getsize(image_path)
     ext = os.path.splitext(image_path)[1].lower().lstrip(".")
-    media_type = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}.get(ext, "image/png")
-    with open(image_path, "rb") as f:
-        data = base64.standard_b64encode(f.read()).decode("utf-8")
-    return media_type, data
+
+    with Image.open(image_path) as im:
+        # Strip alpha for JPEG compatibility — flatten onto white if RGBA/LA/P.
+        if im.mode in ("RGBA", "LA", "P"):
+            background = Image.new("RGB", im.size, (255, 255, 255))
+            if im.mode == "P":
+                im = im.convert("RGBA")
+            background.paste(im, mask=im.split()[-1] if im.mode in ("RGBA", "LA") else None)
+            im = background
+        elif im.mode != "RGB":
+            im = im.convert("RGB")
+
+        long_edge = max(im.size)
+        needs_resize = long_edge > _MAX_LONG_EDGE_PX
+        needs_recompress = raw_size > _TARGET_BYTES or ext == "png"
+
+        if not needs_resize and not needs_recompress:
+            with open(image_path, "rb") as f:
+                data = base64.standard_b64encode(f.read()).decode("utf-8")
+            media_type = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}.get(ext, "image/png")
+            return media_type, data
+
+        if needs_resize:
+            scale = _MAX_LONG_EDGE_PX / long_edge
+            new_size = (max(1, int(im.size[0] * scale)), max(1, int(im.size[1] * scale)))
+            im = im.resize(new_size, Image.LANCZOS)
+            logger.info(f"  Resized image {long_edge}px → {_MAX_LONG_EDGE_PX}px on longest edge")
+
+        for quality in (90, 85, 80, 70, 60):
+            buf = io.BytesIO()
+            im.save(buf, format="JPEG", quality=quality, optimize=True)
+            if buf.tell() <= _TARGET_BYTES:
+                break
+
+        if buf.tell() > _TARGET_BYTES:
+            logger.warning(f"  Image still {buf.tell()} bytes after q=60 — Claude may reject")
+        else:
+            logger.info(f"  Compressed image to {buf.tell()} bytes (JPEG q={quality})")
+
+        return "image/jpeg", base64.standard_b64encode(buf.getvalue()).decode("utf-8")
 
 
 def generate_prompts_from_image(

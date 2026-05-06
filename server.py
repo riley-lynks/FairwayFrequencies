@@ -59,6 +59,11 @@ if _winget_links and _winget_links not in os.environ.get("PATH", ""):
 app = Flask(__name__, static_folder=PROJECT_ROOT)
 CORS(app)  # Allow cross-origin requests (needed for browser → localhost API calls)
 
+# Image uploads (animation prompts from image) get auto-resized server-side to
+# fit Claude's 5 MB base64 cap, but the raw upload from Gemini can be much
+# bigger. 25 MB covers all practical cases.
+app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
+
 # =============================================================================
 # IN-MEMORY RUN TRACKING
 # =============================================================================
