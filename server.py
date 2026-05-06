@@ -188,6 +188,73 @@ def generate_prompt_api():
 
 
 # =============================================================================
+# IMAGE-GROUNDED ANIMATION PROMPTS API
+# =============================================================================
+
+@app.route("/api/animation-prompts-from-image", methods=["POST"])
+def animation_prompts_from_image_api():
+    """
+    Generate 3 Kling animation prompts grounded on an uploaded image.
+
+    Use case: user generates an image in Gemini/Flux outside this UI, the
+    image diverges from the original text prompt, and they want fresh motion
+    prompts that match what's actually in the frame.
+
+    Request:
+        multipart/form-data with:
+          - image: the file (required)
+          - scene_hint: optional flavor string
+
+    Returns:
+        { prompts: [str, str, str], visible_elements: [str, ...] }
+    """
+    if "image" not in request.files:
+        return jsonify({"error": "No image file provided"}), 400
+
+    file = request.files["image"]
+    if not file.filename:
+        return jsonify({"error": "Empty filename"}), 400
+
+    if not config.ANTHROPIC_API_KEY:
+        return jsonify({"error": "ANTHROPIC_API_KEY is not set — cannot run vision call"}), 400
+
+    # Save to a temp path so the pipeline module can read it as a regular file
+    import tempfile
+    ext = os.path.splitext(file.filename)[1].lower() or ".png"
+    if ext not in (".png", ".jpg", ".jpeg", ".webp"):
+        return jsonify({"error": f"Unsupported image type: {ext}"}), 400
+
+    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+        file.save(tmp.name)
+        tmp_path = tmp.name
+
+    try:
+        from pipeline.animation_from_image import generate_prompts_from_image
+        scene_hint = (request.form.get("scene_hint") or "").strip()
+
+        app.logger.info(f"Generating image-grounded animation prompts for {file.filename}")
+        result = generate_prompts_from_image(
+            image_path=tmp_path,
+            api_key=config.ANTHROPIC_API_KEY,
+            claude_model=config.CLAUDE_MODEL,
+            scene_hint=scene_hint,
+        )
+        return jsonify(result)
+    except FileNotFoundError as e:
+        return jsonify({"error": str(e)}), 400
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 502
+    except Exception as e:
+        app.logger.error(f"Image-grounded prompt generation failed: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+
+# =============================================================================
 # PIPELINE EXECUTION API
 # =============================================================================
 

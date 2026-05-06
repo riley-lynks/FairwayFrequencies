@@ -142,6 +142,18 @@ function FairwayControlPanel() {
   const [selectedClipSet, setSelectedClipSet] = useState(null); // chosen folder name ("" = root)
   const [imageGenTool] = useState("gemini");
 
+  // Image-grounded animation prompts (upload an existing image, get 3 prompts
+  // tied to what's actually in the frame — handles cases where Gemini drifts
+  // from the original text prompt)
+  const [groundedFile, setGroundedFile] = useState(null);          // File object
+  const [groundedPreview, setGroundedPreview] = useState(null);    // object URL for <img src>
+  const [groundedLoading, setGroundedLoading] = useState(false);
+  const [groundedPrompts, setGroundedPrompts] = useState([]);      // string[]
+  const [groundedVisible, setGroundedVisible] = useState([]);      // string[] — what Claude saw
+  const [groundedError, setGroundedError] = useState(null);
+  const [copiedGrounded, setCopiedGrounded] = useState(null);      // index | "all" | null
+  const groundedFileInputRef = useRef(null);
+
   // Analytics state
   const [analyticsData, setAnalyticsData] = useState(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
@@ -458,6 +470,85 @@ function FairwayControlPanel() {
     setCopiedNegative(true);
     setTimeout(() => setCopiedNegative(false), 2000);
   }, [klingNegativePrompt]);
+
+  // ---------------------------------------------------------------------------
+  // IMAGE-GROUNDED PROMPTS — upload an existing image and have Claude generate
+  // 3 Kling prompts tied to what's visible in the frame.
+  // ---------------------------------------------------------------------------
+  const handleGroundedFileSelect = useCallback((file) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setGroundedError('Please select an image file (PNG, JPG, or WEBP).');
+      return;
+    }
+    setGroundedFile(file);
+    setGroundedError(null);
+    setGroundedPrompts([]);
+    setGroundedVisible([]);
+    // Revoke previous preview URL to avoid leaks
+    setGroundedPreview(prev => {
+      if (prev) URL.revokeObjectURL(prev);
+      return URL.createObjectURL(file);
+    });
+  }, []);
+
+  const handleGroundedDrop = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const file = e.dataTransfer?.files?.[0];
+    if (file) handleGroundedFileSelect(file);
+  }, [handleGroundedFileSelect]);
+
+  const generateGroundedPrompts = useCallback(async () => {
+    if (!groundedFile) return;
+    setGroundedLoading(true);
+    setGroundedError(null);
+    try {
+      const formData = new FormData();
+      formData.append('image', groundedFile);
+      // Pass the typed scene prompt as a flavor hint (image is still source of truth)
+      if (prompt && prompt.trim()) formData.append('scene_hint', prompt.trim().slice(0, 400));
+      const res = await fetch('/api/animation-prompts-from-image', {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        setGroundedError(data.error || `Server returned ${res.status}`);
+      } else {
+        setGroundedPrompts(data.prompts || []);
+        setGroundedVisible(data.visible_elements || []);
+      }
+    } catch (err) {
+      setGroundedError(`Request failed: ${err.message}`);
+    }
+    setGroundedLoading(false);
+  }, [groundedFile, prompt]);
+
+  const copyGroundedPrompt = useCallback((idx) => {
+    navigator.clipboard.writeText(groundedPrompts[idx]);
+    setCopiedGrounded(idx);
+    setTimeout(() => setCopiedGrounded(null), 2000);
+  }, [groundedPrompts]);
+
+  const copyAllGroundedPrompts = useCallback(() => {
+    const text = groundedPrompts.map((p, i) => `Clip ${i + 1}:\n${p}`).join('\n\n');
+    navigator.clipboard.writeText(text);
+    setCopiedGrounded('all');
+    setTimeout(() => setCopiedGrounded(null), 2000);
+  }, [groundedPrompts]);
+
+  const clearGroundedImage = useCallback(() => {
+    setGroundedFile(null);
+    setGroundedPrompts([]);
+    setGroundedVisible([]);
+    setGroundedError(null);
+    setGroundedPreview(prev => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+    if (groundedFileInputRef.current) groundedFileInputRef.current.value = '';
+  }, []);
 
   // ---------------------------------------------------------------------------
   // GENERATE SCENE — call /api/generate-scene (Claude picks a fresh scene
@@ -915,6 +1006,162 @@ function FairwayControlPanel() {
               </div>
             </div>
           )}
+
+          {/* ── SECTION 3: Image-grounded animation prompts ─────────────────── */}
+          {/* For when the generated image diverges from the text prompt — upload
+              the actual image and get fresh prompts that match what's visible. */}
+          <div style={{ marginTop: 32, paddingTop: 24, borderTop: "1px dashed var(--color-border-tertiary)" }}>
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#B08D57", letterSpacing: 1 }}>
+                STEP 3 — REGENERATE FROM IMAGE (OPTIONAL)
+              </div>
+              <div style={{ fontSize: 12, color: "var(--color-text-tertiary)", marginTop: 3, lineHeight: 1.5 }}>
+                If your generated image looks different than the text prompt described, upload the image here.
+                Claude will look at the actual frame and write 3 fresh Kling prompts that match what's visible —
+                with subtle motion on the flag pin in every prompt.
+              </div>
+            </div>
+
+            {/* Drop zone / file picker */}
+            {!groundedPreview && (
+              <label
+                onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                onDrop={handleGroundedDrop}
+                style={{
+                  display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                  gap: 6, padding: "32px 20px", borderRadius: 10,
+                  border: "2px dashed var(--color-border-secondary)",
+                  background: "var(--color-background-secondary)",
+                  cursor: "pointer", textAlign: "center",
+                }}>
+                <div style={{ fontSize: 24 }}>🖼</div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--color-text-primary)" }}>
+                  Drop an image here or click to choose
+                </div>
+                <div style={{ fontSize: 11, color: "var(--color-text-tertiary)" }}>
+                  PNG, JPG, or WEBP — the actual frame you'll send to Kling
+                </div>
+                <input
+                  ref={groundedFileInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/jpg,image/webp"
+                  onChange={(e) => handleGroundedFileSelect(e.target.files?.[0])}
+                  style={{ display: "none" }}
+                />
+              </label>
+            )}
+
+            {/* Preview + generate button */}
+            {groundedPreview && (
+              <div style={{
+                display: "flex", gap: 14, alignItems: "flex-start",
+                padding: 12, borderRadius: 10,
+                border: "1px solid var(--color-border-tertiary)",
+                background: "var(--color-background-secondary)",
+              }}>
+                <img
+                  src={groundedPreview}
+                  alt="uploaded frame"
+                  style={{ width: 200, height: "auto", borderRadius: 6, flexShrink: 0 }}
+                />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text-primary)", marginBottom: 4 }}>
+                    {groundedFile?.name || "image.png"}
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--color-text-tertiary)", marginBottom: 12 }}>
+                    {groundedFile ? `${(groundedFile.size / 1024).toFixed(0)} KB` : ""}
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button
+                      onClick={generateGroundedPrompts}
+                      disabled={groundedLoading}
+                      style={{
+                        padding: "8px 16px", fontSize: 13, fontWeight: 600, borderRadius: 6,
+                        border: "1px solid #2D6A4F", cursor: groundedLoading ? "not-allowed" : "pointer",
+                        background: groundedLoading ? "#B08D57" : "#2D6A4F", color: "#fff",
+                        fontFamily: "inherit", opacity: groundedLoading ? 0.7 : 1,
+                      }}>
+                      {groundedLoading ? "Looking at image…" : (groundedPrompts.length > 0 ? "Regenerate" : "Generate 3 Prompts")}
+                    </button>
+                    <button
+                      onClick={clearGroundedImage}
+                      disabled={groundedLoading}
+                      style={{
+                        padding: "8px 14px", fontSize: 12, fontWeight: 500, borderRadius: 6,
+                        border: "1px solid var(--color-border-secondary)", cursor: groundedLoading ? "not-allowed" : "pointer",
+                        background: "transparent", color: "var(--color-text-secondary)", fontFamily: "inherit",
+                      }}>
+                      Clear
+                    </button>
+                  </div>
+                  {groundedError && (
+                    <div style={{ marginTop: 10, fontSize: 11, color: "#C53030", lineHeight: 1.5 }}>
+                      {groundedError}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Visible elements (debugging — what Claude actually saw) */}
+            {groundedVisible.length > 0 && (
+              <div style={{ marginTop: 12, fontSize: 11, color: "var(--color-text-tertiary)", lineHeight: 1.6 }}>
+                <span style={{ fontWeight: 600, color: "var(--color-text-secondary)" }}>Claude saw: </span>
+                {groundedVisible.join(" · ")}
+              </div>
+            )}
+
+            {/* Result prompts */}
+            {groundedPrompts.length > 0 && (
+              <div style={{ marginTop: 16 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#B08D57", letterSpacing: 1 }}>
+                    IMAGE-GROUNDED KLING PROMPTS
+                  </div>
+                  <button onClick={copyAllGroundedPrompts} style={{
+                    padding: "6px 12px", fontSize: 11, fontWeight: 600, borderRadius: 6,
+                    border: "1px solid #B08D57", cursor: "pointer", fontFamily: "inherit",
+                    background: copiedGrounded === 'all' ? "#2D6A4F" : "transparent",
+                    color: copiedGrounded === 'all' ? "#fff" : "#B08D57",
+                    transition: "all 0.2s",
+                  }}>
+                    {copiedGrounded === 'all' ? "✓ Copied all!" : "Copy all 3"}
+                  </button>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {groundedPrompts.map((p, i) => (
+                    <div key={i} style={{
+                      background: "#1B4332", borderRadius: 8, padding: "12px 14px",
+                      display: "flex", gap: 12, alignItems: "flex-start",
+                    }}>
+                      <div style={{
+                        fontSize: 10, fontWeight: 700, color: "#B08D57", letterSpacing: 0.5,
+                        whiteSpace: "nowrap", marginTop: 3, minWidth: 38,
+                      }}>
+                        CLIP {i + 1}
+                      </div>
+                      <div style={{
+                        flex: 1, fontSize: 12, color: "#D8F3DC", lineHeight: 1.6,
+                        fontFamily: "'DM Mono', monospace", wordBreak: "break-word",
+                      }}>
+                        {p}
+                      </div>
+                      <button onClick={() => copyGroundedPrompt(i)} style={{
+                        flexShrink: 0, padding: "5px 12px", fontSize: 11, fontWeight: 600,
+                        borderRadius: 5, border: "1px solid #B08D57", cursor: "pointer",
+                        fontFamily: "inherit",
+                        background: copiedGrounded === i ? "#2D6A4F" : "transparent",
+                        color: copiedGrounded === i ? "#D8F3DC" : "#B08D57",
+                        transition: "all 0.2s",
+                      }}>
+                        {copiedGrounded === i ? "✓" : "Copy"}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
