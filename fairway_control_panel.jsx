@@ -119,11 +119,8 @@ function FairwayControlPanel() {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [logExpanded, setLogExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [klingPrompts, setKlingPrompts] = useState([]);   // 3 Kling animation prompts
   const [promptsLoading, setPromptsLoading] = useState(false); // waiting for server
-  const [copiedKling, setCopiedKling] = useState(null);        // index | "all" | null
-  const [klingNegativePrompt, setKlingNegativePrompt] = useState(""); // negative prompt (same for all clips)
-  const [copiedNegative, setCopiedNegative] = useState(false);        // for the negative prompt copy btn
+  const [copiedNegative, setCopiedNegative] = useState(false); // for the negative prompt copy btn
   const [promptSource, setPromptSource] = useState(null);             // "claude" | "local"
   const [klingClipSets, setKlingClipSets] = useState([]);       // available clip sets
   const [selectedClipSet, setSelectedClipSet] = useState(null); // chosen folder name ("" = root)
@@ -369,13 +366,10 @@ function FairwayControlPanel() {
     if (!sceneDesc) return;
 
     setPromptsLoading(true);
-    setKlingPrompts([]);
-    setKlingNegativePrompt("");
     setGeneratedPrompt("");
     setPromptSource(null);
 
     let imagePrompt = "";
-    let klingPromptsArr = [];
     let source = "local";
 
     try {
@@ -392,26 +386,11 @@ function FairwayControlPanel() {
 
       source = data.source || "claude";
 
-      // Use the raw image_prompt from orchestration so we can format it
-      // for whichever tool is selected (ChatGPT / Kling / Midjourney).
       const orch = data.orchestration || {};
       const rawPrompt = orch.image_prompt || data.mj_prompt || `Elevated wide view of a ${sceneDesc}, ${STYLE_SUFFIX}`;
       imagePrompt = formatImagePrompt(rawPrompt);
 
-      // Animation variations are now objects { prompt, negative_prompt }.
-      // Extract the positive prompts for display; the negative prompt is shared.
-      const variations = orch.animation_variations || ANIMATION_VARIATIONS;
-      klingPromptsArr = variations.slice(0, 3).map(v =>
-        typeof v === 'object' ? v.prompt : v
-      );
-      // Negative prompt is the same for every clip — grab from first entry
-      const negPrompt = (variations[0] && typeof variations[0] === 'object')
-        ? (variations[0].negative_prompt || DEFAULT_NEGATIVE_PROMPT)
-        : DEFAULT_NEGATIVE_PROMPT;
-      setKlingNegativePrompt(negPrompt);
-
     } catch (err) {
-      // Server unreachable — build everything locally
       let charDesc = "";
       if (includeCharacter === "always") {
         charDesc = CHARACTER_OPTIONS[Math.floor(Math.random() * CHARACTER_OPTIONS.length)] + ", ";
@@ -420,15 +399,10 @@ function FairwayControlPanel() {
       }
       const rawLocal = `${charDesc}Elevated wide view of a ${sceneDesc}, ${STYLE_SUFFIX}`;
       imagePrompt = formatImagePrompt(rawLocal);
-      klingPromptsArr = ANIMATION_VARIATIONS.map(v =>
-        typeof v === 'object' ? v.prompt : `${sceneDesc}. ${v}`
-      );
-      setKlingNegativePrompt(DEFAULT_NEGATIVE_PROMPT);
       source = "local";
     }
 
     setGeneratedPrompt(imagePrompt);
-    setKlingPrompts(klingPromptsArr);
     setPromptSource(source);
     setPromptsLoading(false);
   }, [prompt, includeCharacter, stylize, formatImagePrompt]);
@@ -439,25 +413,11 @@ function FairwayControlPanel() {
     setTimeout(() => setCopied(false), 2000);
   }, [generatedPrompt]);
 
-  // Copy a single Kling prompt (by index) or all of them at once
-  const copyKlingPrompt = useCallback((idx) => {
-    navigator.clipboard.writeText(klingPrompts[idx]);
-    setCopiedKling(idx);
-    setTimeout(() => setCopiedKling(null), 2000);
-  }, [klingPrompts]);
-
-  const copyAllKlingPrompts = useCallback(() => {
-    const text = klingPrompts.map((p, i) => `Clip ${i + 1}:\n${p}`).join('\n\n');
-    navigator.clipboard.writeText(text);
-    setCopiedKling('all');
-    setTimeout(() => setCopiedKling(null), 2000);
-  }, [klingPrompts]);
-
   const copyNegativePrompt = useCallback(() => {
-    navigator.clipboard.writeText(klingNegativePrompt || DEFAULT_NEGATIVE_PROMPT);
+    navigator.clipboard.writeText(DEFAULT_NEGATIVE_PROMPT);
     setCopiedNegative(true);
     setTimeout(() => setCopiedNegative(false), 2000);
-  }, [klingNegativePrompt]);
+  }, []);
 
   // ---------------------------------------------------------------------------
   // IMAGE-GROUNDED PROMPTS — upload an existing image and have Claude generate
@@ -926,109 +886,20 @@ function FairwayControlPanel() {
             </div>
           )}
 
-          {/* ── SECTION 2: Kling animation prompts (one per clip) ── */}
-          {klingPrompts.length > 0 && (
-            <div style={{ marginTop: 24 }}>
-              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 12, gap: 12 }}>
-                <div>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: "#B08D57", letterSpacing: 1 }}>
-                    STEP 2 — KLING ANIMATION PROMPTS
-                  </div>
-                  <div style={{ fontSize: 12, color: "var(--color-text-tertiary)", marginTop: 3 }}>
-                    app.klingai.com → AI Videos → Image to Video &nbsp;·&nbsp; Standard mode · 5 s · 16:9
-                  </div>
-                </div>
-                <button onClick={copyAllKlingPrompts} style={{
-                  flexShrink: 0, padding: "7px 14px", fontSize: 12, fontWeight: 600,
-                  borderRadius: 6, border: "1px solid #B08D57", cursor: "pointer",
-                  fontFamily: "inherit", whiteSpace: "nowrap",
-                  background: copiedKling === 'all' ? "#2D6A4F" : "transparent",
-                  color: copiedKling === 'all' ? "#fff" : "#B08D57",
-                  transition: "all 0.2s"
-                }}>
-                  {copiedKling === 'all' ? "✓ Copied all!" : "Copy all 3"}
-                </button>
-              </div>
-
-              {/* ── Negative prompt block (copy once, paste into every clip) ── */}
-              <div style={{
-                background: "#2D1B00", border: "1px solid #7A4800", borderRadius: 10,
-                padding: "14px 16px", marginBottom: 12,
-              }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-                  <div>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: "#E8A22A", letterSpacing: 1 }}>
-                      ⚠ NEGATIVE PROMPT
-                    </span>
-                    <span style={{ fontSize: 11, color: "#9A6820", marginLeft: 8 }}>
-                      paste into Kling's Negative Prompt field — same for every clip
-                    </span>
-                  </div>
-                  <button onClick={copyNegativePrompt} style={{
-                    flexShrink: 0, padding: "5px 12px", fontSize: 11, fontWeight: 600,
-                    borderRadius: 5, border: "1px solid #7A4800", cursor: "pointer",
-                    fontFamily: "inherit",
-                    background: copiedNegative ? "#7A4800" : "transparent",
-                    color: copiedNegative ? "#FFD580" : "#E8A22A",
-                    transition: "all 0.2s",
-                  }}>
-                    {copiedNegative ? "✓ Copied!" : "Copy"}
-                  </button>
-                </div>
-                <div style={{
-                  fontSize: 12, color: "#FFD580", lineHeight: 1.6,
-                  fontFamily: "'DM Mono', monospace", wordBreak: "break-word",
-                }}>
-                  {klingNegativePrompt || DEFAULT_NEGATIVE_PROMPT}
-                </div>
-              </div>
-
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {klingPrompts.map((p, i) => (
-                  <div key={i} style={{
-                    background: "#1B4332", borderRadius: 8, padding: "12px 14px",
-                    display: "flex", gap: 12, alignItems: "flex-start"
-                  }}>
-                    <div style={{
-                      fontSize: 10, fontWeight: 700, color: "#B08D57", letterSpacing: 0.5,
-                      whiteSpace: "nowrap", marginTop: 3, minWidth: 38
-                    }}>
-                      CLIP {i + 1}
-                    </div>
-                    <div style={{
-                      flex: 1, fontSize: 12, color: "#D8F3DC", lineHeight: 1.6,
-                      fontFamily: "'DM Mono', monospace", wordBreak: "break-word"
-                    }}>
-                      {p}
-                    </div>
-                    <button onClick={() => copyKlingPrompt(i)} style={{
-                      flexShrink: 0, padding: "5px 12px", fontSize: 11, fontWeight: 600,
-                      borderRadius: 5, border: "1px solid #B08D57", cursor: "pointer",
-                      fontFamily: "inherit",
-                      background: copiedKling === i ? "#2D6A4F" : "transparent",
-                      color: copiedKling === i ? "#D8F3DC" : "#B08D57",
-                      transition: "all 0.2s"
-                    }}>
-                      {copiedKling === i ? "✓" : "Copy"}
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* ── SECTION 3: Image-grounded animation prompts ─────────────────── */}
-          {/* For when the generated image diverges from the text prompt — upload
-              the actual image and get fresh prompts that match what's visible. */}
+          {/* ── SECTION 2: Image-grounded Kling animation prompts ─────────── */}
+          {/* Generate the image in Gemini using the Step 1 prompt, download it,
+              upload it here. Claude looks at the actual frame and writes 3
+              Kling prompts grounded only on visible elements. */}
           <div style={{ marginTop: 32, paddingTop: 24, borderTop: "1px dashed var(--color-border-tertiary)" }}>
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: "#B08D57", letterSpacing: 1 }}>
-                STEP 3 — REGENERATE FROM IMAGE (OPTIONAL)
-              </div>
-              <div style={{ fontSize: 12, color: "var(--color-text-tertiary)", marginTop: 3, lineHeight: 1.5 }}>
-                If your generated image looks different than the text prompt described, upload the image here.
-                Claude will look at the actual frame and write 3 fresh Kling prompts that match what's visible —
-                with subtle motion on the flag pin in every prompt.
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 12, gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#B08D57", letterSpacing: 1 }}>
+                  STEP 2 — KLING ANIMATION PROMPTS FROM IMAGE
+                </div>
+                <div style={{ fontSize: 12, color: "var(--color-text-tertiary)", marginTop: 3, lineHeight: 1.5 }}>
+                  Upload the image you generated in Gemini. Claude looks at the actual frame and writes
+                  3 fresh Kling prompts that match what's visible — with subtle motion on the flag pin in every prompt.
+                </div>
               </div>
             </div>
 
@@ -1124,6 +995,43 @@ function FairwayControlPanel() {
             {/* Result prompts */}
             {groundedPrompts.length > 0 && (
               <div style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 12, color: "var(--color-text-tertiary)", marginBottom: 10 }}>
+                  app.klingai.com → AI Videos → Image to Video &nbsp;·&nbsp; Standard mode · 5 s · 16:9
+                </div>
+
+                {/* Negative prompt — paste once into Kling for every clip */}
+                <div style={{
+                  background: "#2D1B00", border: "1px solid #7A4800", borderRadius: 10,
+                  padding: "14px 16px", marginBottom: 12,
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                    <div>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: "#E8A22A", letterSpacing: 1 }}>
+                        ⚠ NEGATIVE PROMPT
+                      </span>
+                      <span style={{ fontSize: 11, color: "#9A6820", marginLeft: 8 }}>
+                        paste into Kling's Negative Prompt field — same for every clip
+                      </span>
+                    </div>
+                    <button onClick={copyNegativePrompt} style={{
+                      flexShrink: 0, padding: "5px 12px", fontSize: 11, fontWeight: 600,
+                      borderRadius: 5, border: "1px solid #7A4800", cursor: "pointer",
+                      fontFamily: "inherit",
+                      background: copiedNegative ? "#7A4800" : "transparent",
+                      color: copiedNegative ? "#FFD580" : "#E8A22A",
+                      transition: "all 0.2s",
+                    }}>
+                      {copiedNegative ? "✓ Copied!" : "Copy"}
+                    </button>
+                  </div>
+                  <div style={{
+                    fontSize: 12, color: "#FFD580", lineHeight: 1.6,
+                    fontFamily: "'DM Mono', monospace", wordBreak: "break-word",
+                  }}>
+                    {DEFAULT_NEGATIVE_PROMPT}
+                  </div>
+                </div>
+
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: "#B08D57", letterSpacing: 1 }}>
                     IMAGE-GROUNDED KLING PROMPTS
