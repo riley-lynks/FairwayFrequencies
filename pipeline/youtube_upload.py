@@ -129,8 +129,8 @@ def next_optimal_publish_time(
                         reasons.append("AB spacing rule (same scene released recently)")
                     reason_str = " and ".join(reasons) if reasons else "scheduling conflict"
                     logger.warning(
-                        f"  ⚠ Scheduled for {publish_dt.strftime('%B %-d')} — pushed past "
-                        f"{nearest_sunday.strftime('%B %-d')} because: {reason_str}"
+                        f"  ⚠ Scheduled for {publish_dt.strftime('%B')} {publish_dt.day} — pushed past "
+                        f"{nearest_sunday.strftime('%B')} {nearest_sunday.day} because: {reason_str}"
                     )
                 return publish_dt
 
@@ -291,14 +291,28 @@ def upload_to_youtube(
 
 
 def _sanitize_tags(tags: list) -> list:
-    """Enforce YouTube's 500 total-character tag limit (each tag also ≤ 30 chars)."""
+    """Enforce YouTube tag rules: no special chars, each ≤ 100 chars, total ≤ 400 chars.
+
+    YouTube's exact length formula isn't documented, but in practice the limit is
+    well below the nominal 500 once quotes and separators are factored in.
+    We budget conservatively (400) and count multi-word tags as len+2."""
+    import re
+    _BLOCKED_WORDS = {"copyright", "dmca"}
     result, total = [], 0
     for tag in tags:
-        tag = tag[:30]
-        if total + len(tag) > 500:
+        if not isinstance(tag, str):
+            continue
+        tag = re.sub(r'[<>"&]', '', tag).lstrip("#").strip()
+        tag = tag[:100].strip()
+        if not tag:
+            continue
+        if any(w in tag.lower() for w in _BLOCKED_WORDS):
+            continue
+        cost = len(tag) + (2 if " " in tag else 0)
+        if total + cost > 400:
             break
         result.append(tag)
-        total += len(tag)
+        total += cost
     return result
 
 
