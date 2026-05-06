@@ -567,38 +567,50 @@ def schedule_weeks(
                 pool.remove(s)
             return s
 
-        # Mon/Tue: post-release standalones — prefer last Sunday's video, but
-        # always restrict fallback to shorts from videos released by the slot date
         mon_date = week_monday + timedelta(days=0)
         tue_date = week_monday + timedelta(days=1)
-        mon_short = pick(prefer_stem=last_stem, prefer_folder=last_folder, released_before=mon_date)
-        tue_short = pick(prefer_stem=last_stem, prefer_folder=last_folder, released_before=tue_date)
+        wed_date = week_monday + timedelta(days=2)
+        thu_date = week_monday + timedelta(days=3)
+        fri_date = week_monday + timedelta(days=4)
+        sat_date = week_monday + timedelta(days=5)
+
+        # Skip pick() for slots that are already uploaded — otherwise those
+        # picks would still drain the pool and pollute used_folders, starving
+        # the remaining unfilled slots in the same week.
+        def is_filled(d):
+            return d.isoformat() in already_filled
+
+        # Mon/Tue: post-release standalones — prefer last Sunday's video, but
+        # always restrict fallback to shorts from videos released by the slot date
+        mon_short = None if is_filled(mon_date) else pick(prefer_stem=last_stem, prefer_folder=last_folder, released_before=mon_date)
+        tue_short = None if is_filled(tue_date) else pick(prefer_stem=last_stem, prefer_folder=last_folder, released_before=tue_date)
 
         # Wed/Sat: teasers for next Sunday's video — skip entirely if no video is scheduled
         if next_video is None:
             wed_short = None
             sat_short = None
         else:
-            wed_short = pick(prefer_stem=next_stem, prefer_folder=next_folder)
-            # Sat: prefer same folder as Wed (same upcoming hole) — explicitly allow Wed's folder
-            sat_prefer_folder = next_folder or (wed_short["video_folder"] if wed_short else None)
-            sat_short = _pick_short(
-                pool,
-                prefer_video_stem=next_stem,
-                prefer_folder=sat_prefer_folder,
-                exclude_ids=used_ids,
-                exclude_folders=used_folders - ({wed_short["video_folder"]} if wed_short else set()),
-            )
-            if sat_short:
-                used_ids.add(sat_short["id"])
-                used_folders.add(sat_short["video_folder"])
-                pool.remove(sat_short)
+            wed_short = None if is_filled(wed_date) else pick(prefer_stem=next_stem, prefer_folder=next_folder)
+            if is_filled(sat_date):
+                sat_short = None
+            else:
+                # Sat: prefer same folder as Wed (same upcoming hole) — explicitly allow Wed's folder
+                sat_prefer_folder = next_folder or (wed_short["video_folder"] if wed_short else None)
+                sat_short = _pick_short(
+                    pool,
+                    prefer_video_stem=next_stem,
+                    prefer_folder=sat_prefer_folder,
+                    exclude_ids=used_ids,
+                    exclude_folders=used_folders - ({wed_short["video_folder"]} if wed_short else set()),
+                )
+                if sat_short:
+                    used_ids.add(sat_short["id"])
+                    used_folders.add(sat_short["video_folder"])
+                    pool.remove(sat_short)
 
         # Thu/Fri: archive — only from videos already released by the slot date
-        thu_date = week_monday + timedelta(days=3)
-        fri_date = week_monday + timedelta(days=4)
-        thu_short = pick(released_before=thu_date)
-        fri_short = pick(released_before=fri_date)
+        thu_short = None if is_filled(thu_date) else pick(released_before=thu_date)
+        fri_short = None if is_filled(fri_date) else pick(released_before=fri_date)
 
         day_slots = [
             (week_monday + timedelta(days=0), mon_short, "standalone"),
