@@ -36,15 +36,15 @@ logger = logging.getLogger("fairway.orchestrator")
 # =============================================================================
 # MONTHLY ART STYLE ROTATION
 # =============================================================================
-# 4 styles rotate monthly. Each style affects the image prompt suffix,
+# 4 styles are selected randomly per video. Each style affects the image prompt suffix,
 # the orchestrator's art direction instructions, and (automatically) the
 # thumbnail since it's extracted from the rendered video.
 #
-# Rotation (0-indexed by (month-1) % 4):
-#   0 → Ghibli Anime     (Jan, May, Sep)
-#   1 → Photorealistic   (Feb, Jun, Oct)
-#   2 → Watercolour      (Mar, Jul, Nov)  ← current month
-#   3 → Oil Painting     (Apr, Aug, Dec)
+# Styles (randomly chosen each run):
+#   0 → Ghibli Anime
+#   1 → Photorealistic
+#   2 → Watercolour
+#   3 → Oil Painting
 
 ART_STYLES = [
     {
@@ -122,36 +122,32 @@ ART_STYLES = [
 
 
 def get_current_art_style() -> dict:
-    """
-    Return the art style dict for the current month.
-
-    Rotates through ART_STYLES every month:
-      Jan/May/Sep → Ghibli, Feb/Jun/Oct → Cinematic,
-      Mar/Jul/Nov → Watercolour, Apr/Aug/Dec → Oil Painting
-    """
-    month = datetime.now().month
-    return ART_STYLES[(month - 1) % 4]
+    """Return a randomly selected art style from ART_STYLES."""
+    return random.choice(ART_STYLES)
 
 
 def generate_scene_prompt(
     api_key: str,
     claude_model: str,
     scene_history: list = None,
+    target_month: int = None,
 ) -> tuple:
     """
-    Ask Claude to generate a fresh, seasonal golf scene prompt for this month's art style.
+    Ask Claude to generate a fresh, seasonal golf scene prompt.
 
     Args:
         api_key:       Anthropic API key.
         claude_model:  Model ID to use.
         scene_history: List of past scene entries from scene_history.json (to avoid repeats).
+        target_month:  1-12 month to base seasonal context on (defaults to current month).
 
     Returns:
         (scene_description: str, art_style: dict)
     """
     art_style = get_current_art_style()
-    month_name = datetime.now().strftime("%B")
-    season = _month_to_season(datetime.now().month)
+    month_num = target_month if target_month else datetime.now().month
+    month_name = datetime(2000, month_num, 1).strftime("%B")
+    season = _month_to_season(month_num)
 
     # Build recently-used list to steer Claude away from repetition
     # NOTE: include ALL recent scenes — both library and custom — so Claude
@@ -182,9 +178,9 @@ def generate_scene_prompt(
 
     user_message = (
         f"Month: {month_name} ({season})\n"
-        f"Art style this month: {art_style['name']} — {art_style['description']}"
+        f"Art style: {art_style['name']} — {art_style['description']}"
         f"{avoid_text}\n\n"
-        "Generate a fresh golf scene for this month. "
+        "Generate a fresh golf scene for this art style. "
         "Pick a course type that has NOT appeared recently in the list above."
     )
 

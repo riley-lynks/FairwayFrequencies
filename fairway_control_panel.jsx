@@ -15,19 +15,6 @@ const { useState, useCallback, useRef, useEffect } = React;
 // DATA — Scene library, style constants, character options
 // =============================================================================
 
-// Monthly art style rotation — mirrors ART_STYLES in pipeline/orchestrator.py
-// (month - 1) % 4 → 0=Ghibli, 1=Cinematic, 2=Watercolour, 3=Oil Painting
-const ART_STYLES = [
-  { name: "Studio Ghibli Anime",      short: "Ghibli",      description: "Hand-painted anime aesthetic. Rich saturated colors, soft natural light, dreamlike atmosphere.", accent: "#2D6A4F" },
-  { name: "Cinematic Photorealistic", short: "Cinematic",   description: "Film-quality photography look. Dramatic golden-hour lighting, shallow depth of field.",          accent: "#744210" },
-  { name: "Soft Watercolour",         short: "Watercolour", description: "Delicate watercolour illustration. Soft washes, paper texture, impressionistic.",                accent: "#2C5282" },
-  { name: "Rich Oil Painting",        short: "Oil Painting",description: "Classical oil painting. Impasto texture, Old Masters drama, rich deep colors.",                  accent: "#702459" },
-];
-
-function getCurrentArtStyle() {
-  const month = new Date().getMonth() + 1; // 1-12
-  return ART_STYLES[(month - 1) % 4];
-}
 
 // Short style suffix appended to Gemini prompts — matches STYLE_SUFFIX in config.py
 const STYLE_SUFFIX = `in the style of a detailed anime background painting, Studio Ghibli inspired, vibrant saturated colors, clean linework, lush detailed landscape, warm natural lighting, soft puffy clouds, visible brushstroke texture, concept art quality, 16:9 widescreen composition, no text, no UI elements`;
@@ -141,6 +128,8 @@ function FairwayControlPanel() {
   const [klingClipSets, setKlingClipSets] = useState([]);       // available clip sets
   const [selectedClipSet, setSelectedClipSet] = useState(null); // chosen folder name ("" = root)
   const [imageGenTool] = useState("gemini");
+  const [scheduledMonth, setScheduledMonth] = useState(new Date().getMonth() + 1); // 1-12
+  const [serverRestarting, setServerRestarting] = useState(false);
 
   // Image-grounded animation prompts (upload an existing image, get 3 prompts
   // tied to what's actually in the frame — handles cases where Gemini drifts
@@ -255,13 +244,12 @@ function FairwayControlPanel() {
     }
 
     // ── 5. Next video prompt ─────────────────────────────────────────────────
-    const artStyle = getCurrentArtStyle();
     const season = getCurrentSeasonScene().label;
     recs.push({
       icon: "▶",
-      title: `Next Video: ${artStyle.name} + ${season}`,
-      body: `This month's art style is ${artStyle.name}. Click "✦ Generate Scene" on the Create tab — Claude will write a fresh golf scene that matches the ${artStyle.short} aesthetic and the current ${season} season.`,
-      action: `Go to Create & Prompt → click ✦ Generate Scene → run the pipeline`,
+      title: `Next Video: ${season} scene`,
+      body: `Click "✦ Generate Scene" on the Create tab — Claude will write a fresh golf scene for the selected scheduled month, with a randomly chosen art style applied automatically.`,
+      action: `Go to Create & Prompt → set the Scheduled Month → click ✦ Generate Scene → run the pipeline`,
       accent: "blue",
     });
 
@@ -554,10 +542,21 @@ function FairwayControlPanel() {
   // GENERATE SCENE — call /api/generate-scene (Claude picks a fresh scene
   // based on the current month's art style + season)
   // ---------------------------------------------------------------------------
+  const handleRestartServer = useCallback(async () => {
+    if (!window.confirm('Restart the server? The page will reload after 2 seconds.')) return;
+    setServerRestarting(true);
+    try { await fetch('/api/restart', { method: 'POST' }); } catch { /* server closing is expected */ }
+    setTimeout(() => window.location.reload(), 2500);
+  }, []);
+
   const handleGenerateScene = useCallback(async () => {
     setSceneGenerating(true);
     try {
-      const res = await fetch('/api/generate-scene', { method: 'POST' });
+      const res = await fetch('/api/generate-scene', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target_month: scheduledMonth }),
+      });
       const data = await res.json();
       if (data.scene) {
         setPrompt(data.scene);
@@ -571,14 +570,79 @@ function FairwayControlPanel() {
 
 
   // ---------------------------------------------------------------------------
+  // POLLING — shared by runPipeline and mount-resume
+  // ---------------------------------------------------------------------------
+  const startPolling = useCallback((runId) => {
+    if (pollingRef.current) clearInterval(pollingRef.current);
+    pollingRef.current = setInterval(async () => {
+      try {
+        const statusRes = await fetch(`/api/pipeline-status/${runId}`);
+        if (!statusRes.ok) {
+          clearInterval(pollingRef.current);
+          pollingRef.current = null;
+          setPipelineRunning(false);
+          setPipelineStatus('error');
+          setPipelineLog([{ time: new Date().toLocaleTimeString(), stage: "—", msg: "Pipeline session lost (server restarted)", error: true }]);
+          localStorage.removeItem('pipeline_run_id');
+          return;
+        }
+        const status = await statusRes.json();
+        if (status.logs && status.logs.length > 0) {
+          setPipelineLog(status.logs.map(entry => ({
+            time: entry.time || new Date().toLocaleTimeString(),
+            stage: entry.stage ? `Stage ${entry.stage}` : "—",
+            msg: entry.msg,
+            done: entry.done || false,
+            error: entry.error || false,
+          })));
+        }
+        if (status.status === 'complete' || status.status === 'failed') {
+          clearInterval(pollingRef.current);
+          pollingRef.current = null;
+          setPipelineRunning(false);
+          setPipelineStatus(status.status === 'failed' ? 'error' : 'complete');
+          localStorage.removeItem('pipeline_run_id');
+        }
+      } catch (err) {
+        console.error('Polling error:', err);
+      }
+    }, 2000);
+  }, []);
+
+  // On mount, resume polling if a pipeline was running before the page refreshed
+  useEffect(() => {
+    const savedRunId = localStorage.getItem('pipeline_run_id');
+    if (!savedRunId) return;
+    fetch(`/api/pipeline-status/${savedRunId}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(status => {
+        if (!status) { localStorage.removeItem('pipeline_run_id'); return; }
+        const savedStart = localStorage.getItem('pipeline_start_time');
+        if (savedStart) setPipelineStartTime(Number(savedStart));
+        if (status.logs?.length > 0) {
+          setPipelineLog(status.logs.map(entry => ({
+            time: entry.time || new Date().toLocaleTimeString(),
+            stage: entry.stage ? `Stage ${entry.stage}` : "—",
+            msg: entry.msg,
+            done: entry.done || false,
+            error: entry.error || false,
+          })));
+        }
+        if (status.status === 'running') {
+          setPipelineRunning(true);
+          setPipelineStatus('running');
+          startPolling(savedRunId);
+        } else {
+          setPipelineStatus(status.status === 'failed' ? 'error' : 'complete');
+          localStorage.removeItem('pipeline_run_id');
+        }
+      })
+      .catch(() => localStorage.removeItem('pipeline_run_id'));
+  }, [startPolling]);
+
+  // ---------------------------------------------------------------------------
   // RUN PIPELINE — POST to server, then poll for real-time log updates
   // ---------------------------------------------------------------------------
-  // HOW IT WORKS:
-  //   1. POST /api/run-pipeline → server spawns `python fairway.py` as a subprocess
-  //      and returns a `run_id` (timestamp string like "20240315_143022")
-  //   2. Every 2 seconds, GET /api/pipeline-status/<run_id> → server returns
-  //      accumulated log lines + current status ("running" | "complete" | "error")
-  //   3. When status is "complete" or "error", stop polling
   const runPipeline = useCallback(async () => {
     if (pipelineRunning) return;
 
@@ -589,13 +653,12 @@ function FairwayControlPanel() {
     setElapsedSeconds(0);
     setLogExpanded(false);
 
-    // Build the arguments to pass to fairway.py.
     const args = {
       duration: duration,
       no_ambience: !includeAmbience,
       character: includeCharacter,
       scene: prompt,
-      clips_folder: selectedClipSet,     // which video_clips subfolder to use
+      clips_folder: selectedClipSet,
       upload: uploadToYoutube,
       ab_test: abTest,
     };
@@ -609,60 +672,20 @@ function FairwayControlPanel() {
         body: JSON.stringify(args),
       });
       const data = await res.json();
-
-      if (!data.run_id) {
-        throw new Error(data.error || 'Server did not return a run ID');
-      }
-
+      if (!data.run_id) throw new Error(data.error || 'Server did not return a run ID');
       runId = data.run_id;
+      localStorage.setItem('pipeline_run_id', runId);
+      localStorage.setItem('pipeline_start_time', Date.now().toString());
     } catch (err) {
-      setPipelineLog([{
-        time: new Date().toLocaleTimeString(),
-        stage: "—",
-        msg: `Failed to start pipeline: ${err.message}`,
-        error: true,
-      }]);
+      setPipelineLog([{ time: new Date().toLocaleTimeString(), stage: "—", msg: `Failed to start pipeline: ${err.message}`, error: true }]);
       setPipelineRunning(false);
       setPipelineStatus("error");
       return;
     }
 
-    // Start polling every 2 seconds.
-    // Server returns: { status: "running"|"complete"|"failed", logs: [{ time, stage, msg, done, error }] }
-    pollingRef.current = setInterval(async () => {
-      try {
-        const statusRes = await fetch(`/api/pipeline-status/${runId}`);
-        const status = await statusRes.json();
+    startPolling(runId);
 
-        // Map server log entries to display format.
-        // Server uses "logs" (not "log"), "time" (not "timestamp"), "msg" (not "message")
-        if (status.logs && status.logs.length > 0) {
-          setPipelineLog(status.logs.map(entry => ({
-            time: entry.time || new Date().toLocaleTimeString(),
-            // Server sends stage like "3/11" — we prefix with "Stage "
-            stage: entry.stage ? `Stage ${entry.stage}` : "—",
-            msg: entry.msg,
-            done: entry.done || false,
-            error: entry.error || false,
-          })));
-        }
-
-        // Stop polling when pipeline finishes or errors out.
-        // Server uses "failed" for errors (not "error")
-        if (status.status === 'complete' || status.status === 'failed') {
-          clearInterval(pollingRef.current);
-          pollingRef.current = null;
-          setPipelineRunning(false);
-          // Normalize "failed" → "error" for the UI banner
-          setPipelineStatus(status.status === 'failed' ? 'error' : 'complete');
-        }
-      } catch (err) {
-        // Network hiccup — keep polling, don't stop yet
-        console.error('Polling error:', err);
-      }
-    }, 2000);
-
-  }, [pipelineRunning, prompt, duration, includeAmbience, includeCharacter, selectedClipSet, uploadToYoutube, abTest]);
+  }, [pipelineRunning, prompt, duration, includeAmbience, includeCharacter, selectedClipSet, uploadToYoutube, abTest, startPolling]);
 
   // ---------------------------------------------------------------------------
   // BUILD COMMAND PREVIEW (shown in the dark box on the Run tab)
@@ -690,10 +713,25 @@ function FairwayControlPanel() {
       {/* ------------------------------------------------------------------ */}
       {/* HEADER                                                              */}
       {/* ------------------------------------------------------------------ */}
-      <div style={{ textAlign: "center", padding: "32px 0 24px", borderBottom: "2px solid #2D6A4F" }}>
+      <div style={{ position: "relative", textAlign: "center", padding: "32px 0 24px", borderBottom: "2px solid #2D6A4F" }}>
         <div style={{ fontSize: 13, letterSpacing: 3, color: "#B08D57", fontWeight: 600, marginBottom: 6 }}>FAIRWAY FREQUENCIES</div>
         <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 28, color: "#1B4332", fontWeight: 400 }}>Control Panel</div>
         <div style={{ fontSize: 13, color: "var(--color-text-secondary)", marginTop: 6 }}>LoFi Golf · Living Painting Pipeline</div>
+        <button
+          onClick={handleRestartServer}
+          disabled={serverRestarting}
+          title="Restart server"
+          style={{
+            position: "absolute", top: 12, right: 0,
+            background: "none", border: "1px solid var(--color-border-tertiary)",
+            borderRadius: 8, padding: "6px 10px", cursor: serverRestarting ? "not-allowed" : "pointer",
+            color: serverRestarting ? "var(--color-text-tertiary)" : "var(--color-text-secondary)",
+            fontSize: 16, lineHeight: 1, fontFamily: "inherit", opacity: serverRestarting ? 0.5 : 1,
+            transition: "all 0.2s",
+          }}
+        >
+          {serverRestarting ? "⟳" : "↺"}
+        </button>
       </div>
 
       {/* ------------------------------------------------------------------ */}
@@ -721,34 +759,6 @@ function FairwayControlPanel() {
       {tab === "create" && (
         <div style={{ padding: "24px 0" }}>
 
-          {/* ── Art Style Banner ─────────────────────────────────────────── */}
-          {(() => {
-            const style = getCurrentArtStyle();
-            return (
-              <div style={{
-                borderRadius: 10, padding: "16px 20px", marginBottom: 20,
-                border: `1px solid ${style.accent}40`,
-                background: `${style.accent}12`,
-              }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-                  <div>
-                    <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1.5, color: style.accent, marginBottom: 4 }}>
-                      THIS MONTH'S ART STYLE
-                    </div>
-                    <div style={{ fontSize: 16, fontWeight: 700, color: "var(--color-text-primary)" }}>{style.name}</div>
-                    <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2 }}>{style.description}</div>
-                  </div>
-                  <div style={{
-                    fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 20,
-                    background: style.accent, color: "#fff", letterSpacing: 0.3,
-                  }}>
-                    {style.short}
-                  </div>
-                </div>
-              </div>
-            );
-          })()}
-
           {/* ── Generate Scene + manual textarea ──────────────────────── */}
           <div style={{ marginBottom: 24 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
@@ -771,7 +781,7 @@ function FairwayControlPanel() {
             <textarea
               value={prompt}
               onChange={e => setPrompt(e.target.value)}
-              placeholder="Click ✦ Generate Scene to have Claude write a fresh scene for this month's art style, or type your own description…"
+              placeholder="Click ✦ Generate Scene to have Claude write a fresh scene for the selected scheduled month, or type your own description…"
               style={{
                 width: "100%", padding: 14, fontSize: 14, borderRadius: 8,
                 border: "1px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)",
@@ -797,18 +807,18 @@ function FairwayControlPanel() {
           {/* Settings row */}
           <div style={{
             display: "grid",
-            gridTemplateColumns: "1fr 1fr 1fr 1fr",
+            gridTemplateColumns: "1fr 1fr 1fr 1fr 1fr",
             gap: 16, marginBottom: 24,
           }}>
             <div>
-              <label style={{ fontSize: 11, fontWeight: 600, color: "var(--color-text-secondary)" }}>CHARACTER</label>
-              <select value={includeCharacter} onChange={e => setIncludeCharacter(e.target.value)}
+              <label style={{ fontSize: 11, fontWeight: 600, color: "var(--color-text-secondary)" }}>SCHEDULED MONTH</label>
+              <select value={scheduledMonth} onChange={e => setScheduledMonth(Number(e.target.value))}
                 style={{ width: "100%", marginTop: 4, padding: "8px 10px", fontSize: 13, borderRadius: 6,
                   border: "1px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)",
                   color: "var(--color-text-primary)", fontFamily: "inherit" }}>
-                <option value="random">Random (40%)</option>
-                <option value="always">Always</option>
-                <option value="never">Never</option>
+                {["January","February","March","April","May","June","July","August","September","October","November","December"].map((name, i) => (
+                  <option key={i+1} value={i+1}>{name}</option>
+                ))}
               </select>
             </div>
             <div>

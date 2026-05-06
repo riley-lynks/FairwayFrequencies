@@ -152,7 +152,7 @@ NUM_ANIMATION_CLIPS = 3   # How many Kling clips to generate (and how many promp
 # WHY 2 seconds? Short enough to be invisible (the composition doesn't change),
 # long enough to smooth out any motion discontinuity between clips.
 # Since all clips share the same base image, even a 1-second fade is nearly invisible.
-LOOP_BLEND_SECONDS = 2  # Crossfade duration between animation clips (seconds)
+LOOP_BLEND_SECONDS = 1  # Crossfade duration between animation clips (seconds)
 
 # =============================================================================
 # ANIMATION PROMPT STRUCTURE — Camera-Lock Format

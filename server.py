@@ -574,6 +574,21 @@ def list_output_files():
 
 
 # =============================================================================
+# SERVER RESTART
+# =============================================================================
+
+@app.route("/api/restart", methods=["POST"])
+def restart_server():
+    """Restart the server process in-place."""
+    def _do_restart():
+        import time
+        time.sleep(0.4)
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+    threading.Thread(target=_do_restart, daemon=True).start()
+    return jsonify({"ok": True})
+
+
+# =============================================================================
 # SCENE GENERATION API
 # =============================================================================
 
@@ -592,10 +607,14 @@ def generate_scene():
         if not config.ANTHROPIC_API_KEY:
             return jsonify({"error": "ANTHROPIC_API_KEY not set in .env"}), 400
 
+        body = request.get_json(silent=True) or {}
+        target_month = body.get("target_month")
+
         scene, art_style = generate_scene_prompt(
             api_key=config.ANTHROPIC_API_KEY,
             claude_model=config.CLAUDE_MODEL,
             scene_history=load_scene_history(),
+            target_month=target_month,
         )
 
         return jsonify({
